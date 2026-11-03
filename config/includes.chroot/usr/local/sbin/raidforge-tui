@@ -1,0 +1,145 @@
+#!/bin/sh
+#
+# Console entry point for the erase appliance (tty1, started from
+# /root/.bash_profile via "exec").
+#
+# Responsibilities:
+#   1. run the TUI with the shipped venv;
+#   2. leave /run/raidforge.done behind so the *next* autologin lands on a shell
+#      instead of restarting the TUI forever;
+#   3. put the terminal back into a sane state;
+#   4. offer the operator a menu: power off / reboot / restart the app / shell.
+#
+# No "set -e" on purpose: this script must always reach the menu, even when the
+# TUI crashed.  The menu lives here rather than in Python because it has to
+# outlive the Python process - if the app segfaults there is still a way out.
+#
+# RAIDFORGE_EXIT_MENU=off (see /etc/raidforge/env) skips the menu and just exits;
+# tests use it to tell "the menu is stuck" apart from "the app is stuck".
+
+# Overridable so tests can drive this exact script against a throw-away tree.
+APP_ROOT="${RAIDFORGE_APP_ROOT:-/opt/raidforge}"
+DONE_FLAG="${RAIDFORGE_DONE_FLAG:-/run/raidforge.done}"
+
+cd "$APP_ROOT" 2>/dev/null || exit 1
+
+[ -r /etc/raidforge/env ] && . /etc/raidforge/env
+: "${TERM:=linux}"
+export TERM PYTHONUNBUFFERED=1
+
+# Force Textual/Rich down to the 16 ANSI colours.  Without this the console
+# sometimes gets 24-bit escapes (38;2;r;g;b), and a truecolour value that the
+# VGA/fbcon palette cannot express is a colour we cannot reason about - it is
+# the class of bug that made the table header invisible.
+export TEXTUAL_COLOR_SYSTEM=standard
+
+run_app() {
+    "$APP_ROOT/venv/bin/python" -m raidforge "$@"
+}
+
+# Geometry is *not* forced here: Textual reads the real pty winsize, and lying
+# to it (40x132 on an 80x25 VGA text console) only produces wrapped garbage.
+# /etc/raidforge/env may set RAIDFORGE_TTY_ROWS/COLS for a deliberate override.
+apply_geometry() {
+    [ -n "${RAIDFORGE_TTY_ROWS:-}" ] && stty rows "$RAIDFORGE_TTY_ROWS" 2>/dev/null || true
+    [ -n "${RAIDFORGE_TTY_COLS:-}" ] && stty cols "$RAIDFORGE_TTY_COLS" 2>/dev/null || true
+}
+
+reset_terminal() {
+    # Textual restores termios on a clean exit but not after a hard failure.
+    stty sane 2>/dev/null </dev/tty || true
+    # RIS: full reset without depending on ncurses/clear being installed.
+    printf '\033c'
+}
+
+apply_geometry
+run_app "$@"
+status=$?
+
+# The app owns the audit trail; this flag only steers the next autologin.
+: > "$DONE_FLAG"
+
+reset_terminal
+
+if [ "${RAIDFORGE_EXIT_MENU:-on}" = "off" ]; then
+    exit "$status"
+fi
+
+# Re-open the controlling terminal: the TUI consumed stdin, so a plain read here
+# can return EOF immediately and the menu would flash past.
+exec 3</dev/tty 2>/dev/null || exit "$status"
+
+# Ctrl-C must not kill the menu: the whole point is that there is always a way
+# out (power off / reboot) even after the app crashed.
+trap '' INT
+
+while :; do
+    printf '\n  ============================================================\n'
+    printf '   raidforge session finished (exit %s)\n' "$status"
+    printf '  ============================================================\n\n'
+    printf '    [1] power off\n'
+    printf '    [2] reboot\n'
+    printf '    [3] restart the app\n'
+    printf '    [4] shell\n\n'
+    printf '  choice: '
+
+    # EOF means the tty is gone (hangup, getty restart) - leaving the loop is
+    # the only sane answer.  A bare Enter just redraws the menu.
+    read -r choice <&3 || { printf '\n'; exit "$status"; }
+
+    case "$choice" in
+        1)
+            printf '\n  powering off...\n'
+            poweroff -f >/dev/tty 2>&1 || systemctl poweroff -f >/dev/tty 2>&1 || {
+                printf '\n  !! power off failed - choose again\n'
+                continue
+            }
+            ;;
+        2)
+            printf '\n  rebooting...\n'
+            reboot -f >/dev/tty 2>&1 || systemctl reboot -f >/dev/tty 2>&1 || {
+                printf '\n  !! reboot failed - choose again\n'
+                continue
+            }
+            ;;
+        3)
+            # Restarting means the next autologin must not skip the TUI.
+            rm -f "$DONE_FLAG"
+            reset_terminal
+            # The menu ignores SIGINT, but the app must get a normal one.
+            trap - INT
+            run_app "$@"
+            status=$?
+            trap '' INT
+            : > "$DONE_FLAG"
+            reset_terminal
+            ;;
+        4)
+            # A *child* shell, not "exit": this script is exec'd from
+            # .bash_profile, so exiting here would kill the whole login
+            # session and the menu could never come back.
+            #
+            # bash -i (never -l): .bash_profile only runs for login shells, so
+            # the TUI cannot be launched again from inside; .bashrc still gives
+            # the operator PATH and the erase-* aliases.
+            printf '\n  type "exit" to return to this menu\n'
+            reset_terminal
+            # Hand the operator a normal Ctrl-C while inside the shell, then
+            # take it back so Ctrl-C cannot kill the menu itself.
+            trap - INT
+            if [ -x /bin/bash ]; then
+                /bin/bash -i </dev/tty >/dev/tty 2>&1 || true
+            else
+                /bin/sh -i </dev/tty >/dev/tty 2>&1 || true
+            fi
+            trap '' INT
+            reset_terminal
+            ;;
+        "")
+            # bare Enter: redraw
+            ;;
+        *)
+            printf '\n  !! unknown choice: %s\n' "$choice"
+            ;;
+    esac
+done

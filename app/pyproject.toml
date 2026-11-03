@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "raidforge"
+version = "1.1.0"
+description = "RAIDFORGE: Textual TUI for RAID management and auditable disk erasure in a Debian live image"
+requires-python = ">=3.11"
+dependencies = [
+    "textual==0.89.1",
+    "pyyaml>=6.0,<7.0",
+    "python-docx==1.1.2",
+    "Pillow==10.4.0",
+    "lxml==4.9.4",
+]
+
+[project.scripts]
+raidforge = "raidforge.main:main"
+
+[tool.setuptools]
+packages = [
+    "raidforge",
+    "raidforge.core",
+    "raidforge.ui",
+    "raidforge.ui.screens",
+    "raidforge.ui.widgets",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

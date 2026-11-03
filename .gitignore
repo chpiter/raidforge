@@ -1,0 +1,55 @@
+## transient / generated
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+
+## live-build working tree
+.cache/
+chroot/
+binary/
+cache/
+config/binary
+config/bootstrap
+config/chroot
+config/common
+config/source
+.tmp/
+
+## build outputs
+*.iso
+*.iso.sha256
+*.img
+*.contents
+*.packages
+*.hybrid.iso
+*.buildinfo
+build-start.stamp
+
+## staged during build (copies of app/ and wheels)
+config/includes.chroot/usr/src/raidforge/
+config/includes.chroot/usr/src/raidforge-vendor/
+vendor/wheels/
+
+## shipped binaries - never commit, see README "Vendor tools"
+config/includes.chroot/usr/local/bin/storcli
+config/includes.chroot/usr/local/bin/arcconf
+config/includes.chroot/usr/local/bin/ssacli
+config/includes.chroot/usr/local/bin/perccli
+config/includes.chroot/usr/local/bin/megacli
+
+## local evidence / keys
+/var/log/raidforge-evidence
+evidence-local/
+*.pem
+keys/
+# the bare "keys/" pattern only matches the repo root, so name the shipped
+# evidence-upload key explicitly - it must never be committed
+config/includes.chroot/etc/raidforge/keys/
+
+## tool output (tools/check.sh, chroot_tty.py, qemu_drive.py)
+artifacts/
+
+## debug helper credentials (tools/rssh.py)
+tools/.remote.env

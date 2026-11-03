@@ -1,0 +1,14 @@
+# Pinned exactly: the TUI contract was verified against this version (the one
+# the bookworm-era wheels resolve to), and Textual's DataTable/cursor/focus
+# behaviour has changed repeatedly across releases.  Bumping this means
+# re-running tools/check.sh against the new version and rebuilding the ISO.
+textual==0.89.1
+pyyaml>=6.0,<7.0
+# Server-dimensional DOCX report.  All three are pure wheels on PyPI
+# (python-docx is pure Python; lxml/Pillow ship cp311 manylinux wheels), so the
+# offline wheelhouse install keeps working.  lxml is pinned to keep a
+# manylinux_2_17 build: Debian 12's glibc is new enough, but the older tag is
+# accepted by every build host we use.
+python-docx==1.1.2
+Pillow==10.4.0
+lxml==4.9.4

@@ -1,0 +1,9 @@
+# Python runtime.  The TUI itself is installed from vendored wheels during the
+# chroot hook so its version is reproducible (see build.sh --vendor-only).
+#
+# Deliberately no compilers / -dev packages: every dependency ships as a wheel,
+# and the live image has no business carrying gcc.
+python3
+python3-venv
+python3-setuptools
+python3-wheel

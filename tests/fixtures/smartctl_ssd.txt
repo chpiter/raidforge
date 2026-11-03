@@ -1,0 +1,19 @@
+smartctl 7.2 2020-12-30 r5155 [x86_64-linux-5.10.0-23-amd64] (local build)
+Copyright (C) 2002-20, Bruce Allen, Christian Franke, www.smartmontools.org
+
+=== START OF INFORMATION SECTION ===
+Model Family:     Micron 5100 / 5200 Series SSDs
+Device Model:     Micron_5100_MTFDDAK960TCC
+Serial Number:    17461ABCD
+LU WWN Device Id: 5 00a075 1161abcd1
+Firmware Version: D0MU0205
+User Capacity:    960,197,124,096 bytes [960 GB]
+Sector Sizes:     512 bytes logical, 4096 bytes physical
+Rotation Rate:    Solid State Device
+Form Factor:      2.5 inches
+TRIM Command:     Available, deterministic, zeroed
+Device is:        In smartctl database [for details use: -P show]
+ATA Version is:   ACS-3 T13/2161-D revision 5
+SATA Version is:  SATA 3.1, 6.0 Gb/s (current: 6.0 Gb/s)
+SMART support is: Available - device has SMART capability.
+SMART support is: Enabled

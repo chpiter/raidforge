@@ -1,0 +1,17 @@
+{
+  "Controllers": [
+    {
+      "Command Status": {
+        "Controller": 0,
+        "Status": "Success",
+        "Description": "None"
+      },
+      "Response Data": {
+        "Product Name": "MegaRAID Tri-Mode SAS3108",
+        "Serial Number": "SV45678901",
+        "FW Package Build": "24.5.4-0003",
+        "FW Version": "5.230.11-3951"
+      }
+    }
+  ]
+}

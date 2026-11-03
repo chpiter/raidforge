@@ -1,0 +1,161 @@
+#!/bin/bash
+#
+# Install the application into /opt/raidforge inside the chroot.
+#
+# Inputs produced by build.sh:
+#   /usr/src/raidforge     - copy of app/ (source tree)
+#   /usr/src/raidforge-vendor  - python wheels for Debian 12 / CPython 3.11
+#
+# Outputs:
+#   /opt/raidforge         - source tree (read only in practice)
+#   /opt/raidforge/venv    - isolated interpreter with textual + pyyaml
+#   /usr/local/sbin/raidforge-tui - console wrapper used by /root/.bash_profile
+#
+set -Eeuo pipefail
+
+APP_ROOT=/opt/raidforge
+VENV="${APP_ROOT}/venv"
+SRC=/usr/src/raidforge
+WHEELS=/usr/src/raidforge-vendor
+
+echo "== raidforge: install =="
+
+install -d "${APP_ROOT}"
+install -d /var/log/raidforge-evidence
+install -d /var/lib/raidforge/pending
+install -d /var/lib/raidforge/uploaded
+install -d /etc/raidforge
+install -d -m 0700 /etc/raidforge/keys
+
+# ---- application source ----------------------------------------------------
+if [ -d "${SRC}" ]; then
+    # `cp -a` only adds files: on a refresh rebuild (chroot kept between builds)
+    # a module deleted from app/ would otherwise survive inside the image.
+    # Everything except the venv and the site config is replaced wholesale.
+    for entry in "${APP_ROOT}"/* "${APP_ROOT}"/.[!.]*; do
+        [ -e "${entry}" ] || continue
+        case "$(basename "${entry}")" in
+            venv|config.yaml|config.d) continue ;;
+        esac
+        rm -rf "${entry}"
+    done
+    cp -a "${SRC}/." "${APP_ROOT}/"
+    find "${APP_ROOT}" -name __pycache__ -type d -prune -exec rm -rf {} + 2>/dev/null || true
+else
+    echo "!! ${SRC} missing - shipping without sources" >&2
+fi
+
+# ---- virtualenv + offline wheel install ------------------------------------
+if [ -x "${VENV}/bin/python" ] && "${VENV}/bin/python" -c 'import textual, yaml, docx, PIL' >/dev/null 2>&1; then
+    # Fast path: ./build.sh --refresh keeps the chroot, and the venv in it is
+    # already complete.  Reinstalling the same wheels every iteration is pure
+    # latency.
+    echo "venv already provides textual + pyyaml + python-docx + Pillow - reusing"
+elif compgen -G "${WHEELS}/*.whl" > /dev/null; then
+    # python3-venv ships its own ensurepip payload, so this needs no network.
+    python3 -m venv "${VENV}"
+    # Only upgrade what is actually staged: asking for a package that is not in
+    # the wheel cache (e.g. "wheel") makes --no-index fail hard.
+    "${VENV}/bin/python" -m pip install --no-index --no-cache-dir \
+        --find-links "${WHEELS}" --upgrade pip setuptools || true
+    "${VENV}/bin/python" -m pip install --no-index --no-cache-dir \
+        --find-links "${WHEELS}" textual pyyaml python-docx Pillow
+else
+    # No wheels staged: fall back to whatever the Debian archive provides and
+    # let the venv see it.  This is a degraded path - build.sh normally stages
+    # wheels, so log loudly.
+    echo "!! no wheels found in ${WHEELS}; falling back to system python packages" >&2
+    python3 -m venv --system-site-packages "${VENV}"
+    python3 -c 'import textual' 2>/dev/null || {
+        echo "!! textual is not installed system-wide either - install python3-textual" >&2
+        exit 1
+    }
+    cp /etc/os-release "${VENV}/../system-site.txt" 2>/dev/null || true
+fi
+
+# ---- console wrapper -------------------------------------------------------
+# The wrapper is a real file in config/includes.chroot/usr/local/sbin/raidforge-tui
+# (it now carries the post-exit menu, which is far too much shell to keep in a
+# heredoc).  includes.chroot preserves the host file mode, so make sure it is
+# executable inside the image.
+install -d /usr/local/sbin
+chmod 0755 /usr/local/sbin/raidforge-tui 2>/dev/null || {
+    echo "!! /usr/local/sbin/raidforge-tui is missing from includes.chroot" >&2
+    exit 1
+}
+
+# ---- evidence upload key ---------------------------------------------------
+# OpenSSH refuses a private key that is group/other readable, and
+# includes.chroot preserves the host mode (0644 on any Windows checkout).
+# Without this the rsync channel fails with "Permissions 0644 ... too open"
+# and every session silently ends up in the pending queue.
+if [ -d /etc/raidforge/keys ]; then
+    chmod 0700 /etc/raidforge/keys
+    find /etc/raidforge/keys -type f -exec chmod 0600 {} +
+fi
+
+# ---- vendor RAID CLIs ------------------------------------------------------
+# includes.chroot keeps the host mode, and vendor archives commonly unpack as
+# 0644; core/detect.py probes them with exec, so normalise the bit here.
+for tool in storcli arcconf ssacli; do
+    if [ -f "/usr/local/bin/${tool}" ]; then
+        chmod 0755 "/usr/local/bin/${tool}"
+        echo "vendor tool ready: ${tool}"
+    fi
+done
+
+# ---- editable config template ---------------------------------------------
+# Factory template, regenerated on every build.  Site values (and anything the
+# operator saves from the TUI) belong in /etc/raidforge/config.d/*.yaml, which
+# this hook never touches.
+cat > /etc/raidforge/config.yaml <<'YAML'
+# FACTORY TEMPLATE - regenerated by 010-install-app.hook.chroot on every build.
+# Do not edit here unless you also edit the hook; put site values in
+# /etc/raidforge/config.d/90-site.yaml (written by the TUI Settings screen).
+# Precedence: this file < config.d/*.yaml < RAIDFORGE_* environment < --set.
+report:
+  enabled: true
+  wait_for_route_seconds: 30
+  transport: ssh
+  ssh_host: 192.168.40.129
+  ssh_user: evidence
+  ssh_port: 22
+  ssh_key_path: /etc/raidforge/keys/evidence_ed25519
+  ssh_remote_root: /srv/evidence/incoming
+  http_base_url: ""
+  http_port: 8080
+  run_upload_seconds: 30
+tools:
+  command_timeout: 60
+evidence:
+  root: /var/log/raidforge-evidence
+  record_session: true
+ui:
+  # Palette is fixed to black/white in the code (see README 6.1.1).  These keys
+  # are kept only so older site configs keep loading; they are ignored.
+  background: "#000000"
+  foreground: "#FFFFFF"
+  refresh_interval: 1.0
+YAML
+chmod 0644 /etc/raidforge/config.yaml
+
+install -d /etc/raidforge/config.d
+chmod 0755 /etc/raidforge/config.d
+# /opt/raidforge is what the app runs from; point its config paths at /etc so
+# there is exactly one copy of each file.
+rm -rf "${APP_ROOT}/config.d"
+ln -sfn /etc/raidforge/config.d "${APP_ROOT}/config.d"
+ln -sfn /etc/raidforge/config.yaml "${APP_ROOT}/config.yaml"
+
+# ---- sanity check ----------------------------------------------------------
+"${VENV}/bin/python" - <<'PY' 2>&1 || echo "!! import smoke test failed" >&2
+import sys
+sys.path.insert(0, "/opt/raidforge")
+import docx
+import PIL
+from raidforge import __version__
+from raidforge.core import commands
+print("raidforge installed OK, version", __version__, "Pillow", PIL.__version__)
+PY
+
+echo "== raidforge: install done =="

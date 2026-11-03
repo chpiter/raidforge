@@ -1,0 +1,18 @@
+{
+  "Controllers": [
+    {
+      "Command Status": {"Controller": 0, "Status": "Success", "Description": "None"},
+      "Response Data": {
+        "Drive /c0/e32/s0": {"EID:Slt": "32,0", "State": "Onln", "DG": "0", "Size": "1.818 TB", "Intf": "SAS", "Med": "HDD", "SED": "N", "Sp": "7200", "Model": "ST2000NM0008", "Frw": "SN02", "SN": "ZTN1ABCDEFG"},
+        "Drive /c0/e32/s1": {"EID:Slt": "32,1", "State": "Onln", "DG": "0", "Size": "1.818 TB", "Intf": "SAS", "Med": "HDD", "SED": "N", "Sp": "7200", "Model": "ST2000NM0008", "Frw": "SN02", "SN": "ZTN1ABCDEFH"},
+        "Drive /c0/e32/s2": {"EID:Slt": "32,2", "State": "Onln", "DG": "1", "Size": "1.818 TB", "Intf": "SAS", "Med": "HDD", "SED": "N", "Sp": "7200", "Model": "ST2000NM0008", "Frw": "SN02", "SN": "ZTN1ABCDEFI"},
+        "Drive /c0/e32/s3": {"EID:Slt": "32,3", "State": "Onln", "DG": "1", "Size": "1.818 TB", "Intf": "SAS", "Med": "HDD", "SED": "N", "Sp": "7200", "Model": "ST2000NM0008", "Frw": "SN02", "SN": "ZTN1ABCDEFJ"},
+        "Drive /c0/e32/s4": {"EID:Slt": "32,4", "State": "Onln", "DG": "1", "Size": "1.818 TB", "Intf": "SAS", "Med": "HDD", "SED": "N", "Sp": "7200", "Model": "ST2000NM0008", "Frw": "SN02", "SN": "ZTN1ABCDEFK"},
+        "Drive /c0/e32/s5": {"EID:Slt": "32,5", "State": "Onln", "DG": "1", "Size": "1.818 TB", "Intf": "SAS", "Med": "HDD", "SED": "N", "Sp": "7200", "Model": "ST2000NM0008", "Frw": "SN02", "SN": "ZTN1ABCDEFL"},
+        "Drive /c0/e32/s6": {"EID:Slt": "32,6", "State": "UGood", "DG": "-", "Size": "1.818 TB", "Intf": "SAS", "Med": "HDD", "SED": "N", "Sp": "7200", "Model": "ST2000NM0008", "Frw": "SN02", "SN": "ZTN1ABCDEFM"},
+        "Drive /c0/e32/s7": {"EID:Slt": "32,7", "State": "Frgn", "DG": "-", "Size": "1.818 TB", "Intf": "SAS", "Med": "HDD", "SED": "N", "Sp": "7200", "Model": "ST2000NM0008", "Frw": "SN02", "SN": "ZTN1ABCDEFN"},
+        "Drive /c0/e32/s8": {"EID:Slt": "32,8", "State": "Failed", "DG": "-", "Size": "1.818 TB", "Intf": "SAS", "Med": "HDD", "SED": "N", "Sp": "7200", "Model": "ST2000NM0008", "Frw": "SN02", "SN": "ZTN1ABCDEFO"}
+      }
+    }
+  ]
+}

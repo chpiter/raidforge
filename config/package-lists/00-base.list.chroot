@@ -1,0 +1,32 @@
+# Base live system: boot machinery, networking, evidence transport.
+live-boot
+live-boot-doc
+live-config
+live-config-systemd
+live-tools
+systemd
+systemd-sysv
+dbus
+iproute2
+isc-dhcp-client
+iputils-ping
+net-tools
+openssh-client
+# No openssh-server: the appliance takes no inbound sessions.  Install it by
+# hand on a maintenance boot if you really need it.
+rsync
+ca-certificates
+curl
+less
+nano
+htop
+lsof
+procps
+psmisc
+# arcconf (Adaptec) is a C++ binary - it needs the runtime, not just libc.
+libstdc++6
+libgcc-s1
+tzdata
+locales
+kbd
+console-setup

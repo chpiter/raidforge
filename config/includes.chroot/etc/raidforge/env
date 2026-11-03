@@ -1,0 +1,38 @@
+# Site-local environment for the erase appliance.
+#
+# Sourced by /root/.bash_profile and by /usr/local/sbin/raidforge-tui, i.e. it is
+# read before the TUI starts and before the exit menu appears.
+#
+# Everything here is optional.  Uncomment what you need; a test build may
+# overwrite this file.
+
+# Skip the four-item exit menu and just leave the session (used by automated
+# tests to tell "menu stuck" apart from "app stuck").
+#RAIDFORGE_EXIT_MENU=off
+
+# Force a console geometry.  Leave unset: Textual reads the real pty size, and a
+# wrong value only produces wrapped output.
+#RAIDFORGE_TTY_ROWS=25
+#RAIDFORGE_TTY_COLS=80
+
+# Evidence upload target.  Empty = disabled (the session is queued instead).
+# The factory default lives in /etc/raidforge/config.yaml (192.168.40.129) and
+# the TUI Settings screen writes /etc/raidforge/config.d/90-site.yaml on top of
+# it.  RAIDFORGE_* variables are the HIGHEST precedence: leaving a line active here
+# silently shadows both, so this stays commented out unless you are driving a
+# test rig.
+#
+# The full set of receiver overrides (all commented, all higher than the TUI):
+#RAIDFORGE_REPORT_TRANSPORT=ssh
+#RAIDFORGE_REPORT_SSH_HOST=192.168.40.129
+#RAIDFORGE_REPORT_SSH_USER=evidence
+#RAIDFORGE_REPORT_SSH_PORT=22
+#RAIDFORGE_REPORT_SSH_KEY_PATH=/etc/raidforge/keys/evidence_ed25519
+#RAIDFORGE_REPORT_SSH_REMOTE_ROOT=/srv/evidence/incoming
+#RAIDFORGE_REPORT_HTTP_PORT=8080
+#RAIDFORGE_REPORT_HTTP_BASE_URL=http://10.0.0.10:8080
+# Best-effort upload after each erase run (does not queue on failure).
+#RAIDFORGE_REPORT_RUN_UPLOAD_SECONDS=30
+
+# Hard cap, in seconds, on the upload that runs after the TUI exits.
+#RAIDFORGE_REPORT_EXIT_UPLOAD_SECONDS=30

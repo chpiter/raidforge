@@ -1,0 +1,19 @@
+{
+  "Controllers": [
+    {
+      "Command Status": {
+        "Controller": 0,
+        "Status": "Success",
+        "Description": "None"
+      },
+      "Response Data": {
+        "Number of Controllers": 1,
+        "Host Name": "raidforge-tui",
+        "Operating System ": "Linux",
+        "StoreLib IT Version": "07.2600.0100.0000",
+        "StoreLib IR Version": "07.2600.0100.0000",
+        "Product Name": "MegaRAID Tri-Mode SAS3108"
+      }
+    }
+  ]
+}

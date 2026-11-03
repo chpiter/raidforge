@@ -1,0 +1,11 @@
+# Storage toolchain: generic erase path plus device discovery.
+sg3-utils
+smartmontools
+dmidecode
+hdparm
+nvme-cli
+lsscsi
+util-linux
+parted
+sdparm
+asciinema

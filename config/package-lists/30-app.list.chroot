@@ -1,0 +1,8 @@
+# Console comfort: fonts used by the SVG screenshots / Textual box drawing.
+fonts-dejavu-core
+fontconfig
+jq
+tar
+gzip
+xz-utils
+file

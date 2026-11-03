@@ -1,0 +1,84 @@
+# REFERENCE ONLY - this file is not installed and must NOT be copied to /opt.
+#
+# The image's real factory config is a heredoc inside
+# config/hooks/live/010-install-app.hook.chroot (lines 111-136); that hook
+# regenerates /etc/raidforge/config.yaml on every build.  Copying this file to
+# /opt/raidforge/config.yaml would replace the symlink to /etc and split the
+# configuration in two.
+#
+# Where each value belongs:
+#   factory defaults (permanent)  -> the hook's heredoc, then rebuild the ISO
+#   site overrides (this boot)    -> /etc/raidforge/config.d/*.yaml (TUI writes
+#                                   90-site.yaml; use 99-site.yaml to win)
+#   debugging / automation        -> RAIDFORGE_* env vars, or --set on the command line
+#
+# Precedence (low -> high): compiled defaults < /etc/raidforge/config.yaml
+# < config.d/*.yaml (name order) < --config < RAIDFORGE_* env vars < --set overrides.
+# Everything below is optional - these are the values a site usually sets.
+
+dry_run: false
+
+app_name: "raidforge"
+app_version: "1.0.0"
+
+ui:
+  # The palette is NOT configurable any more: the appliance runs on the bare
+  # Linux console with 16 ANSI colours, and every "almost black" brand colour
+  # (#002B49 was the old one) degrades to bright black (SGR 90), which several
+  # VGA/fbcon implementations draw as *nothing* on a coloured bar.
+  # Black and white are therefore baked into app/raidforge/ui/theme.py.
+  #
+  # The colour keys below are accepted for backwards compatibility and ignored.
+  # background: "#000000"
+  # foreground: "#FFFFFF"
+  # accent: "#4CC2FF"
+  # danger: "#FF5F56"
+  # ok: "#3DDC84"
+
+  # Still honoured: how often the status bar refreshes.
+  refresh_interval: 1.0
+
+tools:
+  detect_timeout: 20
+  enum_timeout: 30
+  # Constraint 12: never wait more than 60s for a submit.
+  command_timeout: 60
+  detection_order: ["storcli", "arcconf", "ssacli", "sg3_utils"]
+  forced_tool: null          # e.g. "storcli" to skip the ladder
+  enable_nvme: true
+  vendor_bin_dir: "/usr/local/bin"
+  default_hdd_method: "thorough"
+  default_ssd_method: null   # null => sanitize when SED capable, else blockerase
+
+evidence:
+  root: "/var/log/raidforge-evidence"
+  record_session: true
+  recorder: "asciinema"
+  recorder_options: ["--overwrite", "--quiet"]
+  snapshot_on_screen_change: true
+
+report:
+  enabled: true
+  # Constraint 10: cap the wait for a network address.
+  wait_for_route_seconds: 30
+  # Preferred upload channel: "ssh" or "http".  The other one is still tried
+  # as a fallback before the session is queued locally.
+  transport: "ssh"
+  # Factory default; change at runtime from the TUI (Dashboard -> S).
+  ssh_host: "192.168.40.129"
+  # ssh_user / ssh_key_path / ssh_remote_root are fixed in the shipped image
+  # and shown read-only in the TUI.  SSH/HTTP ports are editable there.
+  ssh_user: "evidence"
+  ssh_port: 22
+  ssh_key_path: "/etc/raidforge/keys/evidence_ed25519"
+  ssh_remote_root: "/srv/evidence/incoming"
+  ssh_extra_opts: ["-o", "StrictHostKeyChecking=no", "-o", "BatchMode=yes"]
+  # Explicit full URL wins; leave empty to derive http://<ssh_host>:<http_port>.
+  http_base_url: "http://collector.example.internal:8080"
+  http_port: 8080
+  http_timeout: 30
+  # Best-effort upload after each erase run (TUI stays live); failures are not
+  # copied into pending/ here, the final exit upload owns queueing.
+  run_upload_seconds: 30
+  pending_root: "/var/lib/raidforge/pending"
+  uploaded_root: "/var/lib/raidforge/uploaded"

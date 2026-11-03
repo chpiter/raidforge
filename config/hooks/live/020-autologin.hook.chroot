@@ -1,0 +1,26 @@
+#!/bin/bash
+#
+# tty1 automatic root login inside the live system.
+#
+set -Eeuo pipefail
+
+echo "== raidforge: tty1 autologin =="
+
+install -d /etc/systemd/system/getty@tty1.service.d
+cat > /etc/systemd/system/getty@tty1.service.d/autologin.conf <<'UNIT'
+[Service]
+Type=idle
+ExecStart=
+ExecStart=-/sbin/agetty --autologin root --noclear --keep-baud 115200,38400,9600 %I $TERM
+UNIT
+
+# Keep tty1 readable even when the TUI puts the console in application mode.
+install -d /etc/systemd/system/getty@.service.d
+cat > /etc/systemd/system/getty@.service.d/noclear.conf <<'UNIT'
+[Service]
+TTYVTDisallocate=no
+UNIT
+
+systemctl enable getty@tty1.service || true
+
+echo "== raidforge: tty1 autologin done =="

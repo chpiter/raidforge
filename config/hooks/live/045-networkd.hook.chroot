@@ -1,0 +1,38 @@
+#!/bin/bash
+#
+# Enable systemd-networkd so every non-loopback NIC gets DHCPv4.
+#
+# The drop-in itself lives in etc/systemd/network/10-raidforge-dhcp.network and is
+# copied in by includes.chroot; this hook only makes sure the unit is enabled
+# and the file has sane permissions.
+#
+# Deliberately NOT enabled: systemd-networkd-wait-online.service.  Nothing in
+# the boot chain depends on network-online.target, so getty (and the TUI) start
+# immediately; the Dashboard reports readiness in the background.
+#
+set -Eeuo pipefail
+
+echo "== raidforge: networkd =="
+
+install -d /etc/systemd/network
+chmod 0644 /etc/systemd/network/10-raidforge-dhcp.network 2>/dev/null || true
+
+# systemctl enable in a chroot usually works; fall back to the symlink for
+# older systemd versions that refuse without a running manager.
+if systemctl enable systemd-networkd.service 2>/dev/null; then
+    echo "systemd-networkd enabled"
+else
+    install -d /etc/systemd/system/multi-user.target.wants
+    ln -sf /lib/systemd/system/systemd-networkd.service \
+        /etc/systemd/system/multi-user.target.wants/systemd-networkd.service
+    echo "systemd-networkd enabled via symlink"
+fi
+
+# The stock Debian file exists only for tools that read it; ifupdown is not
+# installed, so this content is inert.  Leave it alone rather than fight
+# live-config, which rewrites it early in the boot.
+if [ -f /etc/network/interfaces ]; then
+    echo "note: /etc/network/interfaces is not used (networkd owns the NICs)"
+fi
+
+echo "== raidforge: networkd done =="

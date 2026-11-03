@@ -1,0 +1,8 @@
+#!/bin/sh
+set -e
+
+lb clean noauto "$@"
+
+rm -f build-start.stamp live-image-*.hybrid.iso.buildinfo
+rm -rf config/includes.chroot/usr/src/raidforge
+rm -rf config/includes.chroot/usr/src/raidforge-vendor

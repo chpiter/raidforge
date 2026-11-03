@@ -1,0 +1,4 @@
+[0:0:0:0]    disk    ATA      Micron_5100_MTFD    D0MU  /dev/sda   /dev/sg0
+[0:0:1:0]    disk    SEAGATE  ST2000NM0008       SN02  /dev/sdb   /dev/sg1
+[1:0:0:0]    enclosu 12G SAS  Expander           3.00  -          /dev/sg12
+[N:0:1:1]    disk    NVMe     Micron 9200 MAX    -     /dev/nvme0n1

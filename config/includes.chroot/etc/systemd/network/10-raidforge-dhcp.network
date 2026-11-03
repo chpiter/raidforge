@@ -1,0 +1,21 @@
+# Every physical NIC gets a DHCPv4 lease.
+#
+# Servers in the field have two, four or more ports with unpredictable names
+# (eno1, ens3f0, enp5s0, eth0 ...), so matching a list of names is hopeless.
+# "Name=!lo" matches every interface except loopback; Type=ether keeps bridges,
+# veth pairs and tunnels out of it.
+#
+# Nothing here waits for a lease: getty (and therefore the TUI) starts in
+# parallel.  The app treats "any NIC has a global IPv4" as network-ready and
+# the evidence upload waits its configured budget at exit.
+#
+# DNS: systemd-resolved is disabled in 040-services.hook.chroot, so this file
+# deliberately does not try to manage /etc/resolv.conf.  Configure the evidence
+# receiver by IP address, not by hostname.
+[Match]
+Name=!lo
+Type=ether
+
+[Network]
+DHCP=ipv4
+IPv6AcceptRA=no

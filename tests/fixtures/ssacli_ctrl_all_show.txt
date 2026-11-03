@@ -1,0 +1,14 @@
+Smart Array P440ar in Slot 0 (Embedded)
+   Bus Interface: PCI
+   Slot: 0
+   Serial Number: PDNLH0BRH9P0RF
+   Cache Serial Number: PDNLH0BRH9P0RF
+   Controller Status: OK
+   Hardware Revision: B
+   Firmware Version: 6.60
+   Wait for Cache Room: Disabled
+   Surface Analysis Inconsistency Notification: Disabled
+   Post Prompt Timeout: 15 secs
+   Cache Board Present: True
+   Cache Status: OK
+   Total Cache Size: 4.0

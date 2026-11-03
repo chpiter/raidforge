@@ -1,0 +1,34 @@
+{
+  "Controller": {
+    "ID": 1,
+    "ControllerName": "Adaptec RAID 8805",
+    "SerialNumber": "1A2B3C4D5E6F",
+    "FirmwareVersion": "7.24-0 (59452)",
+    "PhysicalDrives": [
+      {
+        "Channel": 0,
+        "Device": 0,
+        "State": "Ready",
+        "InterfaceType": "SAS",
+        "MediaType": "HDD",
+        "Size": "1.818 TB",
+        "RotationRate": "7200",
+        "Model": "MB2000GVYZK",
+        "SerialNumber": "ARK0130ABCDE",
+        "SASAddress": "5001517f8c9a0101"
+      },
+      {
+        "Channel": 0,
+        "Device": 1,
+        "State": "Ready",
+        "InterfaceType": "SATA",
+        "MediaType": "SSD",
+        "Size": "1.745 TB",
+        "RotationRate": "Solid State Device",
+        "Model": "Micron 5200 ECO",
+        "SerialNumber": "1832F1AABBCC",
+        "SASAddress": "5002538f41a90202"
+      }
+    ]
+  }
+}

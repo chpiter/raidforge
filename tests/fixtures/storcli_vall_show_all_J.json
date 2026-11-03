@@ -1,0 +1,49 @@
+{
+  "Controllers": [
+    {
+      "Command Status": {
+        "Controller": 0,
+        "Status": "Success",
+        "Description": "None"
+      },
+      "Response Data": {
+        "Virtual Drives": [
+          {
+            "DG/VD": "0/0",
+            "TYPE": "RAID1",
+            "State": "Optl",
+            "Access": "RW",
+            "Consist": "Yes",
+            "Cache": "RWBD",
+            "Cac": "-",
+            "sCC": "ON",
+            "Size": "1.818 TB",
+            "Name": "OS"
+          },
+          {
+            "DG/VD": "1/1",
+            "TYPE": "RAID10",
+            "State": "Optl",
+            "Access": "RW",
+            "Consist": "Yes",
+            "Cache": "RWBD",
+            "Cac": "-",
+            "sCC": "ON",
+            "Size": "3.636 TB",
+            "Name": "DATA"
+          }
+        ],
+        "PDs for VD 0": [
+          {"EID:Slt": "32:0", "DID": 0, "State": "Onln", "DG": 0, "Size": "1.818 TB", "Intf": "SAS", "Med": "HDD"},
+          {"EID:Slt": "32:1", "DID": 1, "State": "Onln", "DG": 0, "Size": "1.818 TB", "Intf": "SAS", "Med": "HDD"}
+        ],
+        "PDs for VD 1": [
+          {"EID:Slt": "32:2", "DID": 2, "State": "Onln", "DG": 1, "Size": "1.818 TB", "Intf": "SAS", "Med": "HDD"},
+          {"EID:Slt": "32:3", "DID": 3, "State": "Onln", "DG": 1, "Size": "1.818 TB", "Intf": "SAS", "Med": "HDD"},
+          {"EID:Slt": "32:4", "DID": 4, "State": "Onln", "DG": 1, "Size": "1.818 TB", "Intf": "SAS", "Med": "HDD"},
+          {"EID:Slt": "32:5", "DID": 5, "State": "Onln", "DG": 1, "Size": "1.818 TB", "Intf": "SAS", "Med": "HDD"}
+        ]
+      }
+    }
+  ]
+}

@@ -1,0 +1,27 @@
+#!/bin/bash
+#
+# Final cleanup: remove build inputs, shrink the image.
+#
+set -Eeuo pipefail
+
+echo "== raidforge: cleanup =="
+
+# Build inputs must not be shipped inside the image.
+rm -rf /usr/src/raidforge /usr/src/raidforge-vendor
+rm -rf /opt/raidforge/__pycache__ /opt/raidforge/*/__pycache__ /opt/raidforge/*/*/__pycache__ 2>/dev/null || true
+find /opt/raidforge -name '*.pyc' -delete 2>/dev/null || true
+rm -f /run/raidforge.done
+
+apt-get clean
+rm -rf /var/lib/apt/lists/* /var/cache/apt/*.bin /var/cache/apt/archives/*.deb
+rm -rf /usr/share/man/* /usr/share/doc/* /usr/share/info/* 2>/dev/null || true
+rm -rf /var/log/apt/* /var/log/dpkg.log* /root/.cache 2>/dev/null || true
+
+cat > /etc/raidforge-build-info <<INFO
+image:      raidforge
+built:      $(date -u +%Y-%m-%dT%H:%M:%SZ)
+distribution: Debian 12 (bookworm)
+app_version: $(python3 -c "import re;print(re.search(r'__version__\s*=\s*\"([^\"]+)\"', open('/opt/raidforge/raidforge/__init__.py').read()).group(1))" 2>/dev/null || echo unknown)
+INFO
+
+echo "== raidforge: cleanup done =="

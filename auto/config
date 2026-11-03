@@ -1,0 +1,56 @@
+#!/bin/sh
+#
+# lb config driver.  Called by `lb config`; see live-build(7).
+#
+# Disk: debian bookworm, amd64 only, hybrid ISO with both BIOS (syslinux/isolinux)
+# and UEFI (grub-efi) boot paths so the image boots on legacy servers and on
+# modern ones.
+#
+set -e
+
+DISTRO="${DISTRO:-bookworm}"
+ARCH="${ARCH:-amd64}"
+
+# Mirror actually reachable from the build network.  debootstrap, the build
+# chroot and the runtime apt sources of the live image all point here so an
+# offline-ish intranet build never waits on deb.debian.org.
+MIRROR="${MIRROR:-http://mirrors.163.com/debian/}"
+# security.debian.org is frequently throttled from CN networks; the 163 mirror
+# carries the same bookworm-security repository and is ~10x faster here.
+SECURITY="${SECURITY:-http://mirrors.163.com/debian-security/}"
+
+lb config noauto \
+    --mode debian \
+    --distribution "${DISTRO}" \
+    --architecture "${ARCH}" \
+    --binary-images iso-hybrid \
+    --bootloaders "syslinux,grub-efi" \
+    --archive-areas "main non-free-firmware" \
+    --mirror-bootstrap "${MIRROR}" \
+    --mirror-chroot "${MIRROR}" \
+    --mirror-binary "${MIRROR}" \
+    --mirror-chroot-security "${SECURITY}" \
+    --mirror-binary-security "${SECURITY}" \
+    --parent-mirror-binary "${MIRROR}" \
+    --parent-mirror-chroot "${MIRROR}" \
+    --parent-mirror-binary-security "${SECURITY}" \
+    --parent-mirror-chroot-security "${SECURITY}" \
+    --security true \
+    --updates true \
+    --backports false \
+    --debian-installer none \
+    --debian-installer-gui false \
+    --win32-loader false \
+    --apt-recommends false \
+    --apt-indices false \
+    --apt-source-archives false \
+    --firmware-binary true \
+    --firmware-chroot true \
+    --initramfs live-boot \
+    --system live \
+    --zsync false \
+    --checksums sha256 \
+    --memtest none \
+    --iso-volume "RAIDFORGE" \
+    --bootappend-live "boot=live components hostname=raidforge username=root ip=dhcp quiet" \
+    "$@"

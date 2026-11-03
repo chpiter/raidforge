@@ -1,0 +1,54 @@
+#!/bin/bash
+#
+# /root/.bash_profile: exec the TUI on tty1 (constraint 2).
+#
+# The wrapper is only triggered when:
+#   * the shell really is a login shell on /dev/tty1,
+#   * and the previous TUI session has not already been completed
+#     (otherwise an autologin getty would restart it forever).
+#
+set -Eeuo pipefail
+
+echo "== raidforge: bash_profile =="
+
+cat > /root/.bash_profile <<'PROFILE'
+# ~/.bash_profile - executed for login shells only.
+#
+# Inside the erase live image the root login on tty1 is replaced wholesale by
+# the erase TUI ("exec").  When the TUI exits, /usr/local/sbin/raidforge-tui leaves
+# /run/raidforge.done behind, so the next autologin lands on a normal root
+# shell instead of restarting the TUI forever.  To relaunch by hand:
+#     /usr/local/sbin/raidforge-tui
+# To make logins start the TUI again:  rm -f /run/raidforge.done
+
+export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+export LANG=C.UTF-8
+
+if [ -r /etc/raidforge/env ]; then
+    . /etc/raidforge/env
+fi
+
+__here_tty="$(tty 2>/dev/null || true)"
+
+if [ "${__here_tty}" = "/dev/tty1" ] && [ ! -f /run/raidforge.done ]; then
+    exec /usr/local/sbin/raidforge-tui "$@"
+fi
+
+# Fall back to the Debian default profile.
+[ -r /etc/profile ] && . /etc/profile
+unset __here_tty
+PROFILE
+
+chmod 0644 /root/.bash_profile
+
+# Non-login shells must not trigger the TUI again.
+cat > /root/.bashrc <<'BASHRC'
+export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+export LANG=C.UTF-8
+alias raidforge-tui='/usr/local/sbin/raidforge-tui --no-record'
+alias raidforge-plan='/opt/raidforge/venv/bin/python -m raidforge --print-plan'
+alias raidforge-ev='ls -1t /var/log/raidforge-evidence | head'
+[ -r /etc/bash_completion ] && . /etc/bash_completion
+BASHRC
+
+echo "== raidforge: bash_profile done =="

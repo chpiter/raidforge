@@ -1,0 +1,66 @@
+#!/bin/sh
+#
+# Boot menu countdown.
+#
+# An appliance ISO should boot itself: nobody is standing at the console of a
+# freshly racked server.  This hook gives both boot menus a visible countdown
+# (10s by default) and then boots the default entry unattended, while leaving
+# the menu reachable - pressing any key stops the countdown, so the fail-safe
+# and Utilities entries are still one keystroke away.
+#
+# Runs in the binary stage with CWD=binary/, i.e. *after* live-build generated
+# isolinux/isolinux.cfg and boot/grub/grub.cfg, and before the ISO is packed.
+# Override the delay with RAIDFORGE_BOOT_TIMEOUT=<seconds>.
+#
+set -eu
+
+COUNTDOWN="${RAIDFORGE_BOOT_TIMEOUT:-10}"
+case "$COUNTDOWN" in
+    ''|*[!0-9]*)
+        echo "!! RAIDFORGE_BOOT_TIMEOUT must be a whole number of seconds, got '$COUNTDOWN'" >&2
+        exit 1
+        ;;
+esac
+if [ "$COUNTDOWN" -lt 1 ] || [ "$COUNTDOWN" -gt 3600 ]; then
+    echo "!! RAIDFORGE_BOOT_TIMEOUT out of range (1-3600): $COUNTDOWN" >&2
+    exit 1
+fi
+
+echo "== boot menu: automatic boot after ${COUNTDOWN}s =="
+
+# ---------------------------------------------------------------------------
+# BIOS: isolinux / vesamenu
+# ---------------------------------------------------------------------------
+# syslinux counts in tenths of a second (10s -> timeout 100).  "timeout 0"
+# means "wait forever", which is exactly what we are getting rid of.  prompt 0
+# keeps the graphical menu on screen while the countdown runs; vesamenu prints
+# "Automatic boot in N seconds" underneath it.
+for cfg in isolinux/isolinux.cfg isolinux/menu.cfg; do
+    [ -f "$cfg" ] || continue
+    if grep -q '^timeout ' "$cfg"; then
+        sed -i "s/^timeout .*/timeout $((COUNTDOWN * 10))/" "$cfg"
+        echo "   patched $cfg"
+    fi
+    grep -q '^prompt ' "$cfg" && sed -i 's/^prompt .*/prompt 0/' "$cfg"
+done
+
+# ---------------------------------------------------------------------------
+# UEFI: grub
+# ---------------------------------------------------------------------------
+# boot/grub/grub.cfg is what the ESP's stub chains into, so patching it covers
+# UEFI as well.  timeout_style=menu keeps the entry list visible while counting.
+if [ -f boot/grub/grub.cfg ]; then
+    if grep -q '^set timeout=' boot/grub/grub.cfg; then
+        sed -i "s/^set timeout=.*/set timeout=${COUNTDOWN}/" boot/grub/grub.cfg
+    else
+        tmp="$(mktemp)"
+        {
+            printf 'set timeout_style=menu\nset timeout=%s\n' "$COUNTDOWN"
+            cat boot/grub/grub.cfg
+        } > "$tmp"
+        mv "$tmp" boot/grub/grub.cfg
+    fi
+    echo "   patched boot/grub/grub.cfg"
+fi
+
+echo "== boot menu patched =="

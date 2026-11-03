@@ -1,0 +1,41 @@
+#!/bin/bash
+#
+# Service trimming and runtime directories.
+#
+# The console belongs to the erase TUI; anything that steals the tty, waits for
+# user input or listens on the network without purpose is disabled.
+#
+set -Eeuo pipefail
+
+echo "== raidforge: services =="
+
+# No inbound listeners by default; start it manually when maintenance needs it.
+systemctl disable ssh.service 2>/dev/null || true
+systemctl disable ssh.socket 2>/dev/null || true
+systemctl disable apt-daily.service apt-daily-upgrade.service 2>/dev/null || true
+# Keep resolved off: systemd-networkd (045-networkd.hook.chroot) configures the
+# NICs, and the evidence collector is addressed by IP literal, so there is no
+# name resolution to do.  Re-enabling resolved would need /etc/resolv.conf to
+# point at the stub resolver, which the live image does not wire up.
+systemctl disable systemd-resolved.service 2>/dev/null || true
+systemctl disable man-db.timer 2>/dev/null || true
+systemctl disable e2scrub_all.timer fstrim.timer 2>/dev/null || true
+systemctl mask systemd-firstboot.service 2>/dev/null || true
+
+# Evidence directories must exist before the TUI starts writing into them.
+install -d -m 0700 /var/log/raidforge-evidence
+install -d -m 0755 /var/lib/raidforge/pending
+install -d -m 0755 /var/lib/raidforge/uploaded
+
+# Console geometry is left alone: Textual reads the real pty size.  Forcing
+# 40x132 here used to make an 80x25 VGA console wrap every line.  Sites that
+# really want a fixed size set RAIDFORGE_TTY_ROWS/COLS in /etc/raidforge/env.
+cat > /etc/profile.d/raidforge-console.sh <<'SH'
+if [ "$(tty 2>/dev/null)" = "/dev/tty1" ]; then
+    [ -n "${RAIDFORGE_TTY_ROWS:-}" ] && stty rows "$RAIDFORGE_TTY_ROWS" 2>/dev/null || true
+    [ -n "${RAIDFORGE_TTY_COLS:-}" ] && stty cols "$RAIDFORGE_TTY_COLS" 2>/dev/null || true
+fi
+SH
+chmod 0644 /etc/profile.d/raidforge-console.sh
+
+echo "== raidforge: services done =="

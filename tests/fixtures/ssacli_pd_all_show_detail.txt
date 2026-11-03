@@ -1,0 +1,56 @@
+Smart Array P440ar in Slot 0 (Embedded)
+
+   Array A
+
+      physicaldrive 1I:1:1
+         Port: 1I
+         Box: 1
+         Bay: 1
+         Status: OK
+         Drive Type: Data Drive
+         Interface Type: SAS
+         Size: 2 TB
+         Drive exposed to OS: False
+         Logical/Physical Block Size: 512/4096
+         Rotational Speed: 7200
+         Firmware Revision: HPD5
+         Serial Number: 6XK0A1B2C3D4
+         WWID: 5001438023ba1b10
+         Model: HP      MB2000GEBVH
+         Current Temperature (C): 32
+         Usage remaining: 100.00%
+
+      physicaldrive 1I:1:2
+         Port: 1I
+         Box: 1
+         Bay: 2
+         Status: OK
+         Drive Type: Data Drive
+         Interface Type: SATA
+         Size: 960 GB
+         Drive exposed to OS: False
+         Logical/Physical Block Size: 512/512
+         Rotational Speed: Solid State Device
+         Firmware Revision: HPG1
+         Serial Number: PHLJ9123456789
+         WWID: 55cd2e414fd6d2c1
+         Model: ATA     VK000960GWJPF
+         Current Temperature (C): 28
+         Usage remaining: 98.00%
+
+   Array B
+
+      physicaldrive 2I:1:5
+         Port: 2I
+         Box: 1
+         Bay: 5
+         Status: OK
+         Drive Type: Data Drive
+         Interface Type: SAS
+         Size: 600 GB
+         Logical/Physical Block Size: 512/512
+         Firmware Revision: HPD2
+         Serial Number: 9XT0011223344
+         WWID: 5001438023ba7b20
+         Model: HP      EG0600FBVBF
+         Current Temperature (C): 35

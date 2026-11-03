@@ -1,0 +1,15 @@
+Controllers found: 1
+----------------------------------------------------------------------
+Controller information
+----------------------------------------------------------------------
+   Controller 1:
+   ----------------------------------------------------------------------
+      Device Name                   : Adaptec RAID 8805
+      Physical Slot                 : 3
+      Number of logical devices     : 1
+      Number of physical devices    : 2
+      Controller Serial Number      : 1A2B3C4D5E6F
+      Controller BIOS Version       : 7.24-0 (59452)
+      Controller Firmware Version   : 7.24-0 (59452)
+----------------------------------------------------------------------
+Command completed successfully.

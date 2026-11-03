@@ -1,0 +1,23 @@
+Controllers found: 1
+----------------------------------------------------------------------
+Controller 1
+----------------------------------------------------------------------
+
+Logical device information
+------------------------------------------------------------------------------
+Logical Device number 0
+   Logical Device name                                      : OS
+   RAID level                                               : 1
+   Status of Logical Device                                 : Optimal
+   Size                                                     : 1843200 MB
+   Array                                                    : 0
+   Segment 0                                                : 0,0 0,1
+
+Logical Device number 1
+   Logical Device name                                      : DATA
+   RAID level                                               : 10
+   Status of Logical Device                                 : Optimal
+   Size                                                     : 3686400 MB
+   Array                                                    : 1
+   Segment 0                                                : 0,2 0,3
+   Segment 1                                                : 0,4 0,5

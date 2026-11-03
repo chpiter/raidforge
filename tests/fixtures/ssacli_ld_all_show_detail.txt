@@ -1,0 +1,26 @@
+Smart Array P440ar in Slot 0 (Embedded)
+
+   Array A
+
+      Logical Drive 1 (1.09 TB, RAID 1, OK)
+         Fault Tolerance: 1
+         Size: 1.09 TB
+         Status: OK
+         Logical Drive Label: OS
+         Mirror Group 0:
+            physicaldrive 1I:1:1 (port 1I:box 1:bay 1, SAS HDD, 600 GB, OK)
+         Mirror Group 1:
+            physicaldrive 1I:1:2 (port 1I:box 1:bay 2, SAS HDD, 600 GB, OK)
+
+   Array B
+
+      Logical Drive 2 (1.09 TB, RAID 1+0, OK)
+         Fault Tolerance: 1+0
+         Size: 1.09 TB
+         Status: OK
+         Logical Drive Label: DATA
+         Data Group 0:
+            physicaldrive 2I:1:1 (port 2I:box 1:bay 1, SAS HDD, 600 GB, OK)
+            physicaldrive 2I:1:2 (port 2I:box 1:bay 2, SAS HDD, 600 GB, OK)
+            physicaldrive 2I:1:3 (port 2I:box 1:bay 3, SAS HDD, 600 GB, OK)
+            physicaldrive 2I:1:4 (port 2I:box 1:bay 4, SAS HDD, 600 GB, OK)
