@@ -25,10 +25,10 @@ class DashboardScreen(BaseScreen):
     SCREEN_NAME = SCREEN_NAME
     #: Enter is the default only when no button is focused.  With a focused
     #: Button, its own ``enter -> press`` binding wins in the focused chain.
-    BINDINGS = [Binding("enter", "go_disks", "Disk list", show=False)]
+    BINDINGS = [Binding("enter", "go_disks", "Drive erase", show=False)]
     HINTS = [
-        ("Enter", "disks"),
-        ("C", "raid"),
+        ("Enter", "drive erase"),
+        ("C", "raid info"),
         ("R", "rescan"),
         ("U", "retry upload"),
         ("S", "settings"),
@@ -53,10 +53,10 @@ class DashboardScreen(BaseScreen):
                 # No `variant=`: the monochrome palette has exactly two colours,
                 # so a variant could only leak a third one.  Meaning lives in the
                 # label and in the focus highlight.
-                yield Button("Disk list [Enter]", id="go-disks")
-                yield Button("RAID [C]", id="raid")
+                yield Button("Drive Erase [Enter]", id="go-disks")
+                yield Button("RAID Info [C]", id="raid")
                 yield Button("Rescan [R]", id="rescan")
-                yield Button("Retry upload [U]", id="upload")
+                yield Button("Retry Upload [U]", id="upload")
                 yield Button("Quit [Q]", id="quit")
             yield self.status_line()
         yield KeyBar(self.HINTS)
