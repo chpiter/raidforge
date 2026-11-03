@@ -132,7 +132,9 @@ class RaidProgressScreen(BaseScreen):
         observed, observed_detail = self._observe(results, topology_after, scan_error)
         accepted = sum(1 for result in results if result.status is RaidStatus.ACCEPTED)
         failed = len(results) - accepted
-        stopped = self.ctx.cancel_event.is_set()
+        # A Q that arrives after the last submission but during the rescan must
+        # not relabel a completed run as STOPPED.
+        stopped = self.ctx.cancel_event.is_set() and len(results) < len(self.plans)
         prefix = "STOPPED: " if stopped else "done: "
         self._summary.update(
             f"{prefix}{len(results)} attempts, {accepted} accepted by the controller, {failed} not accepted\n"
@@ -218,8 +220,15 @@ class RaidProgressScreen(BaseScreen):
                 return "confirmed", f"deleted {', '.join(sorted(wanted))}; no target VD remains"
             return "mismatch", f"still visible: {', '.join(remaining)}"
         if self.action is RaidAction.CLEAR_CONFIG:
-            if not topology.volumes:
-                return "confirmed", "no virtual drives remain"
+            foreign = [
+                disk_id
+                for disk_id, reason in topology.blocked.items()
+                if "frgn" in reason.lower() or "foreign" in reason.lower()
+            ]
+            if not topology.volumes and not foreign:
+                return "confirmed", "no virtual drives or foreign configuration remain"
+            if foreign:
+                return "mismatch", f"foreign metadata still present on: {', '.join(foreign)}"
             return "mismatch", f"{len(topology.volumes)} virtual drive(s) still visible"
         return "not_checked", "unknown action"
 

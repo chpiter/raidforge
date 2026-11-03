@@ -176,7 +176,7 @@ fix_modes() {
 chmod 0755 build.sh tools/*.sh tools/*.py 2>/dev/null; \
 chmod 0755 auto/* config/hooks/live/*.hook.* config/includes.chroot/usr/local/sbin/raidforge-tui 2>/dev/null; \
 find tests -name '*.sh' -exec chmod 0755 {} + 2>/dev/null; \
-chmod 0755 config/includes.chroot/usr/local/bin/storcli config/includes.chroot/usr/local/bin/arcconf config/includes.chroot/usr/local/bin/ssacli 2>/dev/null; \
+chmod 0755 config/includes.chroot/usr/local/bin/storcli config/includes.chroot/usr/local/bin/storcli64 config/includes.chroot/usr/local/bin/perccli config/includes.chroot/usr/local/bin/perccli64 config/includes.chroot/usr/local/bin/arcconf config/includes.chroot/usr/local/bin/ssacli config/includes.chroot/usr/local/bin/hpssacli 2>/dev/null; \
 if [ -d config/includes.chroot/etc/raidforge/keys ]; then chmod 0700 config/includes.chroot/etc/raidforge/keys; find config/includes.chroot/etc/raidforge/keys -type f -exec chmod 0600 {} +; fi; \
 true" >/dev/null
 }

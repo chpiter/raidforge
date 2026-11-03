@@ -83,37 +83,71 @@ build_mock_bin() {
     mkdir -p "$MOCK_BIN"
     local f
 
-    cat > "$MOCK_BIN/storcli" <<EOF
+    cat > "$MOCK_BIN/storcli" <<'EOF'
 #!/bin/sh
 F="$FIXTURES"
-case "\$*" in
-  "show J")                cat "\$F/storcli_show_J.json" ;;
-  "/c0 show J")            cat "\$F/storcli_c0_show_J.json" ;;
-  "/c0/eall/sall show J")  cat "\$F/storcli_sall_show_J.json" ;;
+if [ "${MOCK_RAID:-0}" = "1" ]; then
+  case "$*" in
+    "show J")                cat "$F/storcli_show_J.json" ;;
+    "/c0 show J")            cat "$F/storcli_c0_show_J.json" ;;
+    "/c0/eall/sall show J")  cat "$F/storcli_sall_show_J_raid.json" ;;
+    "/c0/vall show all J")   cat "$F/storcli_vall_show_all_J.json" ;;
+    *) echo "Status = Failure" ; exit 1 ;;
+  esac
+  exit 0
+fi
+case "$*" in
+  "show J")                cat "$F/storcli_show_J.json" ;;
+  "/c0 show J")            cat "$F/storcli_c0_show_J.json" ;;
+  "/c0/eall/sall show J")  cat "$F/storcli_sall_show_J.json" ;;
   *) echo "Status = Failure" ; exit 1 ;;
 esac
 EOF
+    cp "$MOCK_BIN/storcli" "$MOCK_BIN/storcli64"
+    cp "$MOCK_BIN/storcli" "$MOCK_BIN/perccli64"
 
-    cat > "$MOCK_BIN/arcconf" <<EOF
+    cat > "$MOCK_BIN/arcconf" <<'EOF'
 #!/bin/sh
 F="$FIXTURES"
-case "\$*" in
-  "list")                  cat "\$F/arcconf_list.txt" ;;
-  "getconfigjson 1")       cat "\$F/arcconf_getconfigjson.json" ;;
+if [ "${MOCK_RAID:-0}" = "1" ]; then
+  case "$*" in
+    "list")                  cat "$F/arcconf_list.txt" ;;
+    "getconfigjson 1")       cat "$F/arcconf_getconfigjson_raid.json" ;;
+    "getconfig 1 ld")        cat "$F/arcconf_getconfig_ld.txt" ;;
+    *) echo "Command failed" ; exit 1 ;;
+  esac
+  exit 0
+fi
+case "$*" in
+  "list")                  cat "$F/arcconf_list.txt" ;;
+  "getconfigjson 1")       cat "$F/arcconf_getconfigjson.json" ;;
   "getconfig 1 pd")        echo "no json support" ; exit 1 ;;
   *) echo "Command failed" ; exit 1 ;;
 esac
 EOF
 
-    cat > "$MOCK_BIN/ssacli" <<EOF
+    cat > "$MOCK_BIN/ssacli" <<'EOF'
 #!/bin/sh
 F="$FIXTURES"
-case "\$*" in
-  "ctrl all show")                      cat "\$F/ssacli_ctrl_all_show.txt" ;;
-  "ctrl slot=0 pd all show detail")     cat "\$F/ssacli_pd_all_show_detail.txt" ;;
+if [ "${MOCK_RAID:-0}" = "1" ]; then
+  case "$*" in
+    "ctrl all show")                        cat "$F/ssacli_ctrl_all_show.txt" ;;
+    "ctrl slot=0 pd all show detail")       cat "$F/ssacli_pd_all_show_detail.txt" ;;
+    "ctrl slot=0 ld all show detail")       cat "$F/ssacli_ld_all_show_detail.txt" ;;
+    "ctrl slot=0 pd all show")              cat "$F/ssacli_pd_all_show.txt" ;;
+    "ctrl slot=0 show detail")              cat "$F/ssacli_ctrl_all_show.txt" ;;
+    "ctrl slot=0 show config detail")       cat "$F/ssacli_ld_all_show_detail.txt" ;;
+    *) echo "Error: no such controller" ; exit 1 ;;
+  esac
+  exit 0
+fi
+case "$*" in
+  "ctrl all show")                      cat "$F/ssacli_ctrl_all_show.txt" ;;
+  "ctrl slot=0 pd all show detail")     cat "$F/ssacli_pd_all_show_detail.txt" ;;
   *) echo "Error: no such controller" ; exit 1 ;;
 esac
 EOF
+    cp "$MOCK_BIN/ssacli" "$MOCK_BIN/hpssacli"
 
     cat > "$MOCK_BIN/sg_scan" <<'EOF'
 #!/bin/sh
@@ -177,6 +211,27 @@ plan_output() {
     rm -rf "$bin"
 }
 
+raid_plan_output() {
+    # Same sandbox, but the read-only RAID topology printer.  MOCK_RAID=1 makes
+    # the vendor stubs answer the RAID subcommands with RAID fixtures.
+    local available="$1" bin tool cmd_path
+    bin="/tmp/erase-raid-bin-$$-${RANDOM}"
+    mkdir -p "$bin"
+    for tool in $available; do
+        [[ -f "$MOCK_BIN/$tool" ]] && cp "$MOCK_BIN/$tool" "$bin/$tool" || true
+    done
+    for tool in cat head tail grep sed awk cut sort uniq tr wc mktemp sha256sum; do
+        cmd_path="$(command -v "$tool" 2>/dev/null)" || continue
+        ln -sf "$cmd_path" "$bin/$tool"
+    done
+    PATH="$bin" \
+    MOCK_RAID=1 \
+    RAIDFORGE_REPORT_ENABLED=false \
+    RAIDFORGE_EVIDENCE_ROOT="$(mktemp -d)" \
+    "$PYTHON" "$APP_DIR/run.py" --dry-run --no-record --no-upload --print-raid-plan
+    rm -rf "$bin"
+}
+
 # --------------------------------------------------------------------------
 # checks: mock mode
 # --------------------------------------------------------------------------
@@ -220,6 +275,26 @@ if [[ "$MODE" == "mock" ]]; then
     plan_output "" > "$out_file"
     expect_contains "$out_file" "tool=none" "no tool -> graceful degradation"
     expect_contains "$out_file" "disks=0" "no inventory without tools"
+
+    echo
+    log "== case 6: storcli64 alias + read-only RAID topology =="
+    raid_plan_output "storcli64 lsscsi smartctl nvme sg_scan" > "$out_file"
+    expect_contains "$out_file" "tool=storcli binary=storcli64" "storcli64 is accepted"
+    expect_contains "$out_file" "volumes: 2" "two VDs parsed"
+    expect_contains "$out_file" "free disks: c0e32s6" "only UGood/unmapped disk is free"
+    expect_contains "$out_file" "blocked c0e32s7:" "foreign disk is blocked"
+
+    echo
+    log "== case 7: perccli64 alias =="
+    raid_plan_output "perccli64 lsscsi smartctl nvme sg_scan" > "$out_file"
+    expect_contains "$out_file" "tool=perccli binary=perccli64" "perccli64 is accepted"
+    expect_contains "$out_file" "volumes: 2" "perccli RAID topology parsed"
+
+    echo
+    log "== case 8: hpssacli alias + HPE RAID topology =="
+    raid_plan_output "hpssacli lsscsi smartctl nvme sg_scan" > "$out_file"
+    expect_contains "$out_file" "tool=ssacli binary=hpssacli" "hpssacli is accepted"
+    expect_contains "$out_file" "volumes: 2" "HPE logical drives parsed"
 else
     echo
     log "real mode: printing the plan for this machine (nothing is executed)"

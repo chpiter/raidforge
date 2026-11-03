@@ -48,9 +48,9 @@ EVIDENCE_ROOT = Path(os.environ.get("EVIDENCE_ROOT", "/srv/evidence/incoming")).
 MAX_UPLOAD_BYTES = int(os.environ.get("MAX_UPLOAD_BYTES", str(512 * 1024 * 1024)))
 
 app = FastAPI(
-    title="Erase Evidence Receiver",
-    version="1.0.0",
-    description="Accepts erase-session archives from the Debian live erase image.",
+    title="RAIDFORGE Evidence Receiver",
+    version="1.1.0",
+    description="Accepts RAIDFORGE evidence archives from the Debian live image.",
 )
 
 

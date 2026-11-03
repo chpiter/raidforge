@@ -165,7 +165,7 @@ class EvidenceSession:
                 }
             )
         manifest = {
-            "schema": "raidforge-evidence/manifest@1",
+            "schema": "raidforge-evidence/manifest@2",
             "session_id": self.session_id,
             "server_sn": self.server_sn,
             "started_at": self.started_at,

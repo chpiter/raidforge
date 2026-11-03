@@ -34,9 +34,12 @@ vendor/wheels/
 
 ## shipped binaries - never commit, see README "Vendor tools"
 config/includes.chroot/usr/local/bin/storcli
+config/includes.chroot/usr/local/bin/storcli64
 config/includes.chroot/usr/local/bin/arcconf
 config/includes.chroot/usr/local/bin/ssacli
+config/includes.chroot/usr/local/bin/hpssacli
 config/includes.chroot/usr/local/bin/perccli
+config/includes.chroot/usr/local/bin/perccli64
 config/includes.chroot/usr/local/bin/megacli
 
 ## local evidence / keys

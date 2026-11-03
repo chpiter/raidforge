@@ -95,7 +95,7 @@ def inherited_meta(evidence: EvidenceSession) -> Dict[str, Any]:
         return {}
 
     meta: Dict[str, Any] = {}
-    for key in ("erase_runs", "submissions", "inventory"):
+    for key in ("erase_runs", "raid_runs", "submissions", "inventory"):
         if isinstance(data.get(key), list):
             meta[key] = data[key]
     if isinstance(data.get("tool"), str):
@@ -141,6 +141,28 @@ def _run_disks(runs: List[EraseRun]) -> List[DiskInfo]:
     return disks
 
 
+def _raid_summary(runs: List[Any]) -> List[Dict[str, Any]]:
+    """Compact RAID action summary for the manifest (details stay in raid_actions.json)."""
+
+    summary: List[Dict[str, Any]] = []
+    for run in runs:
+        summary.append(
+            {
+                "index": getattr(run, "index", 0),
+                "epoch": getattr(run, "epoch", 0),
+                "action": getattr(getattr(run, "action", None), "value", ""),
+                "controller_index": getattr(run, "controller_index", 0),
+                "started_at": getattr(run, "started_at", ""),
+                "finished_at": getattr(run, "finished_at", ""),
+                "dry_run": bool(getattr(run, "dry_run", False)),
+                "cancelled": bool(getattr(run, "cancelled", False)),
+                "counts": run.status_counts() if hasattr(run, "status_counts") else {},
+                "observed": [getattr(result, "observed", "not_checked") for result in getattr(run, "results", [])],
+            }
+        )
+    return summary
+
+
 def _session_meta(
     source: Any,
     runs: List[EraseRun],
@@ -156,6 +178,7 @@ def _session_meta(
     submissions = [
         result.to_json_obj() for run in runs for result in run.results
     ] or inherited.get("submissions", [])
+    raid_runs = _raid_summary(list(getattr(source, "raid_history", [])))
     disk_count = len(payload) or inherited.get("disk_count", 0)
     meta: Dict[str, Any] = {
         "server_id_source": source.server_id.source,
@@ -165,6 +188,7 @@ def _session_meta(
         "submissions": submissions,
         "inventory": payload,
         "erase_runs": [run.to_json_obj() for run in runs] or inherited.get("erase_runs", []),
+        "raid_runs": raid_runs or inherited.get("raid_runs", []),
         "report_file": report_path.name if report_path is not None else inherited.get("report_file"),
         "report_generated_at": report_generated_at or inherited.get("report_generated_at"),
     }

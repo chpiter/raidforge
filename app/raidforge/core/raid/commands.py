@@ -11,7 +11,7 @@ relying on them and then fix the one template here.
 
 from __future__ import annotations
 
-from typing import Dict, List, Optional
+from typing import Dict, List
 
 from ..models import (
     ControllerInfo,
@@ -24,7 +24,7 @@ from ..models import (
     Vendor,
     VolumeInfo,
 )
-from .layout import addressable, ensure_valid, level_number
+from .layout import ensure_valid, level_number
 
 _DEFAULT_BINARY = {
     Vendor.LSI: "storcli",

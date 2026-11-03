@@ -4,14 +4,12 @@ from __future__ import annotations
 
 import json
 import re
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from ...config import Config
-from ..enum_disks import parse_storcli_json
 from ..models import (
     ControllerInfo,
     DiskInfo,
-    RaidAction,
     RaidCapabilities,
     RaidCommandPlan,
     RaidLayout,
@@ -28,7 +26,6 @@ from .parsing import as_int, first_value, normalize_level, unique, walk_dicts
 
 _VD_KEY_RE = re.compile(r"VD\s*/c(\d+)/v(\d+)", re.IGNORECASE)
 _PDS_KEY_RE = re.compile(r"PDs for VD\s+(\d+)", re.IGNORECASE)
-_DRIVE_KEY_RE = re.compile(r"Drive\s*/c(\d+)/e(\d+)/s(\d+)", re.IGNORECASE)
 _REF_RE = re.compile(r"(\d+)\s*[:,]\s*(\d+)")
 
 _FREE_STATES = {"UG", "UGOOD", "UNCONFIGURED GOOD"}
@@ -96,7 +93,6 @@ def _make_volume(
     number: int,
     record: Dict[str, Any],
     members: List[str],
-    disks_by_id: Dict[str, DiskInfo],
     fallback_by_dg: Dict[str, List[str]],
 ) -> Tuple[VolumeInfo, bool]:
     raw_level = first_value(record, ("TYPE", "RAID Level", "Raid Level", "Type", "Level"))
@@ -176,7 +172,6 @@ def parse_vall_json(
             if number is not None and number not in records:
                 records[number] = node
 
-    disks_by_id = {disk.disk_id: disk for disk in disks}
     fallback_by_dg: Dict[str, List[str]] = {}
     for disk in disks:
         dg = str(disk.raw.get("DG", "") or "").strip()
@@ -193,7 +188,7 @@ def parse_vall_json(
         if not members:
             members = _record_members(record, controller.index)
         volume, ambiguous = _make_volume(
-            controller.index, number, record, members, disks_by_id, fallback_by_dg
+            controller.index, number, record, members, fallback_by_dg
         )
         ambiguous_any = ambiguous_any or ambiguous
         volumes.append(volume)
@@ -233,7 +228,7 @@ def parse_vall_text(
     ambiguous_any = False
     for line in text.splitlines():
         match = re.match(
-            r"\s*(\d+)\s*/\s*(\d+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(.+)$",
+            r"^\s*(\d+)\s*/\s*(\d+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s*(.*)$",
             line,
         )
         if not match:

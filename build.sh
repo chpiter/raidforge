@@ -114,7 +114,7 @@ preflight() {
 
     log "preflight: vendor tools in config/includes.chroot/usr/local/bin"
     local found=0
-    for tool in storcli arcconf ssacli; do
+    for tool in storcli storcli64 perccli perccli64 arcconf ssacli hpssacli; do
         local bin="config/includes.chroot/usr/local/bin/${tool}"
         if [[ -x "$bin" ]]; then
             log "  found ${tool}"
@@ -139,6 +139,7 @@ preflight() {
             die "no RAID CLI present. See README section 'Vendor tools', or set ALLOW_MISSING_TOOLS=1"
         fi
     fi
+    log "compat shims (storcli<-storcli64/perccli64, ssacli<-hpssacli) are created in the image when needed"
 
     # Not fatal: remove-audit sessions still run and the evidence still lands in
     # the pending queue, but no session will ever reach the receiver because

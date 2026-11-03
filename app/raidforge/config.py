@@ -319,7 +319,7 @@ def write_site_override(
     )
     try:
         with handle:
-            handle.write("# Written by the erase TUI; merged over config.yaml.\n")
+            handle.write("# Written by the RAIDFORGE TUI; merged over config.yaml.\n")
             handle.write("# Safe to edit by hand. Last write wins at boot.\n")
             yaml.safe_dump(merged, handle, sort_keys=False, allow_unicode=True)
             handle.flush()

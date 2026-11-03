@@ -5,7 +5,6 @@ from __future__ import annotations
 from typing import List, Optional
 
 from textual.app import ComposeResult
-from textual.binding import Binding
 from textual.containers import Container
 from textual.widgets import DataTable, Label, Static
 
@@ -57,10 +56,16 @@ class ControllersScreen(BaseScreen):
         if self.ctx.detection is None or self.ctx.raid is None:
             self._spawn_scan()
 
+    def on_screen_resume(self) -> None:
+        """Refresh VD/PD counts after returning from a controller detail view."""
+
+        self._load()
+
     # -- rendering ----------------------------------------------------------
     def _load(self) -> None:
         detection = self.ctx.detection
         self._controllers = list(detection.controllers) if detection else []
+        self._table._row_keys = []
         self._table.clear(columns=True)
         for label, key in zip(COLUMNS, COLUMN_KEYS):
             self._table.add_column(label, key=key)

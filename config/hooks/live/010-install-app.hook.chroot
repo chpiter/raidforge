@@ -20,6 +20,25 @@ WHEELS=/usr/src/raidforge-vendor
 
 echo "== raidforge: install =="
 
+# LEGACY MIGRATION BEGIN - one-time move from the pre-raidforge tree.
+# This keeps ./build.sh --refresh working against an existing chroot.  The
+# rename guard intentionally ignores this block; remove it after the first
+# successful raidforge build if you do not need refresh compatibility.
+move_legacy() {
+    if [ -e "$1" ] && [ ! -e "$2" ]; then
+        mv "$1" "$2"
+    fi
+}
+move_legacy /opt/erase-app /opt/raidforge
+move_legacy /etc/erase-app /etc/raidforge
+move_legacy /var/lib/erase-app /var/lib/raidforge
+move_legacy /var/log/erase-evidence /var/log/raidforge-evidence
+move_legacy /usr/local/sbin/erase-tui /usr/local/sbin/raidforge-tui
+move_legacy /etc/systemd/network/10-erase-dhcp.network /etc/systemd/network/10-raidforge-dhcp.network
+move_legacy /etc/profile.d/erase-console.sh /etc/profile.d/raidforge-console.sh
+rm -f /run/erase-app.done /etc/erase-build-info
+# LEGACY MIGRATION END
+
 install -d "${APP_ROOT}"
 install -d /var/log/raidforge-evidence
 install -d /var/lib/raidforge/pending
@@ -97,12 +116,34 @@ fi
 # ---- vendor RAID CLIs ------------------------------------------------------
 # includes.chroot keeps the host mode, and vendor archives commonly unpack as
 # 0644; core/detect.py probes them with exec, so normalise the bit here.
-for tool in storcli arcconf ssacli; do
+for tool in storcli storcli64 perccli perccli64 arcconf ssacli hpssacli; do
     if [ -f "/usr/local/bin/${tool}" ]; then
         chmod 0755 "/usr/local/bin/${tool}"
         echo "vendor tool ready: ${tool}"
     fi
 done
+
+# The erase command table keeps using the canonical names (storcli/ssacli).
+# When a server only ships a 64-bit or vendor-branded binary, add a tiny shim
+# so both the erase path and the RAID provider work without touching argv.
+install_shim() {
+    canonical="$1"
+    shift
+    if [ -e "/usr/local/bin/${canonical}" ]; then
+        return 0
+    fi
+    for candidate in "$@"; do
+        if [ -x "/usr/local/bin/${candidate}" ]; then
+            printf '#!/bin/sh\nexec /usr/local/bin/%s "$@"\n' "${candidate}" > "/usr/local/bin/${canonical}"
+            chmod 0755 "/usr/local/bin/${canonical}"
+            echo "compat shim: ${canonical} -> ${candidate}"
+            return 0
+        fi
+    done
+    return 0
+}
+install_shim storcli storcli64 perccli64 perccli
+install_shim ssacli hpssacli
 
 # ---- editable config template ---------------------------------------------
 # Factory template, regenerated on every build.  Site values (and anything the
@@ -127,6 +168,12 @@ report:
   run_upload_seconds: 30
 tools:
   command_timeout: 60
+raid:
+  # RAID0/1/5/10 creation defaults.  Stripe size is fixed in the UI.
+  stripe_kb: 256
+  command_timeout: 120
+  allow_clear_config: true
+  name_max_len: 15
 evidence:
   root: /var/log/raidforge-evidence
   record_session: true

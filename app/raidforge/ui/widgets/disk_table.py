@@ -104,10 +104,10 @@ class DiskTable(DataTable):
         """
 
         selection = list(selection or [])
+        self._row_keys = []
         self.clear(columns=True)
         for label, key in zip(COLUMNS, COLUMN_KEYS):
             self.add_column(label, key=key)
-        self._row_keys = []
         self._rows_meta = {}
         self._cells = {}
 
@@ -236,7 +236,12 @@ class DiskTable(DataTable):
         """Write one cell, keeping the cached text in sync with what is shown."""
 
         self._cells.setdefault(key, {})[column] = value
-        self.update_cell(key, column, value)
+        try:
+            self.update_cell(key, column, value)
+        except Exception:
+            # clear(columns=True) resets the cursor before the new columns are
+            # registered; the watcher must not crash the screen in that window.
+            pass
 
     def _mirror_meta(self, key: str, selected: bool) -> None:
         """Write the flag to ``Row.meta`` when that attribute exists."""

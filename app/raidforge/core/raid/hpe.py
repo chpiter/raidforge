@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Dict, List, Tuple
 
 from ...config import Config
 from ..models import (
@@ -31,6 +31,7 @@ _SECTION_RE = re.compile(r"^\s*(unassigned|Array\s+\S+)\s*$", re.IGNORECASE)
 _DETAIL_KEYS = (
     "Model",
     "Firmware Revision",
+    "Firmware Version",
     "Serial Number",
     "Controller Status",
     "Cache Module Status",

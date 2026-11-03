@@ -8,7 +8,7 @@ errors.  Keeping this layer pure makes every RAID level rule unit-testable.
 from __future__ import annotations
 
 import re
-from typing import Dict, List, Optional
+from typing import List, Optional
 
 from ..models import DiskInfo, Medium, Raid0Mode, RaidLayout, RaidLevel, Vendor
 
@@ -78,7 +78,7 @@ def addressable(disk: DiskInfo, vendor: Optional[Vendor] = None) -> bool:
     return disk_address(disk, vendor) is not None
 
 
-def _capacity(level: RaidLevel, mode: Raid0Mode, disks: List[DiskInfo]) -> int:
+def _capacity(level: RaidLevel, disks: List[DiskInfo]) -> int:
     sizes = [max(0, int(disk.size_bytes or 0)) for disk in disks]
     if not sizes:
         return 0
@@ -155,7 +155,7 @@ def build_layout(
         name=sanitized,
         spans=[[disk.disk_id for disk in span] for span in spans],
         volume_names=volume_names,
-        capacity_bytes=_capacity(level, effective_mode, ordered),
+        capacity_bytes=_capacity(level, ordered),
         warnings=warnings,
     )
 

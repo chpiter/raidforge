@@ -12,7 +12,7 @@ from __future__ import annotations
 import logging
 from typing import Callable, List, Optional
 
-from ..config import Config
+from ...config import Config
 from ..evidence import EvidenceSession
 from ..models import RaidAction, RaidActionResult, RaidCommandPlan, RaidStatus
 from ..utils import RC_TIMEOUT, run_cmd, tail_lines

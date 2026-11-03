@@ -56,6 +56,11 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
         help="override one config value, e.g. --set report.http_base_url=http://10.0.0.1:8080",
     )
     parser.add_argument("--print-plan", action="store_true", help="print the dry run plan for every disk and exit")
+    parser.add_argument(
+        "--print-raid-plan",
+        action="store_true",
+        help="print detected controllers, RAID topology and free-disk eligibility, then exit",
+    )
     parser.add_argument("--verbose", "-v", action="store_true")
     return parser.parse_args(argv)
 
@@ -260,6 +265,54 @@ def print_plan(ctx: AppContext) -> int:
     return EXIT_OK
 
 
+def print_raid_plan(ctx: AppContext) -> int:
+    """Print controller/RAID topology and free-disk eligibility, then exit.
+
+    Read-only: no RAID command is constructed or submitted.  This is the
+    headless companion to the TUI dry-run and is used by the detection test.
+    """
+
+    from .core.scan import scan_host
+
+    scan = scan_host(ctx.cfg)
+    detection = scan.detection
+    raid = scan.raid
+    print(f"tool={detection.tool} binary={detection.binary or '-'} controllers={len(detection.controllers)}")
+    for controller in detection.controllers:
+        topology = raid.topology(controller.index)
+        caps = raid.capabilities_for(controller.index)
+        print(
+            f"  {controller.controller_id}: {controller.vendor.label} model={controller.model or '-'} "
+            f"fw={controller.firmware or '-'} binary={controller.binary or '-'}"
+        )
+        print(
+            "    capabilities: "
+            + ", ".join(
+                [
+                    f"create={caps.create}",
+                    f"delete={caps.delete_vd}",
+                    f"clear={caps.clear_config}",
+                    f"levels={','.join(caps.levels) or '-'}",
+                ]
+            )
+        )
+        if topology is None:
+            print("    topology: not collected")
+            continue
+        if topology.error:
+            print(f"    topology ERROR: {topology.error}")
+        print(f"    volumes: {len(topology.volumes)}")
+        for volume in topology.volumes:
+            print(
+                f"      {volume.volume_id:<6} {volume.level_label:<7} {volume.state or '-':<10} "
+                f"{volume.size_human:<10} members={volume.members_label}"
+            )
+        print(f"    free disks: {', '.join(topology.free_disk_ids) or '-'}")
+        for disk_id, reason in topology.blocked.items():
+            print(f"      blocked {disk_id}: {reason}")
+    return EXIT_OK
+
+
 def main(argv: Optional[List[str]] = None) -> int:
     """Process entry point.
 
@@ -294,6 +347,8 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     if args.print_plan:
         return print_plan(ctx)
+    if args.print_raid_plan:
+        return print_raid_plan(ctx)
 
     start_background_flush(cfg)
 

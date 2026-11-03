@@ -1,19 +1,20 @@
-# 服务器硬盘擦除工具（Debian Live ISO + Python TUI）
+# RAIDFORGE — 服务器 RAID 管理与硬盘擦除工具（Debian Live ISO + Python TUI）
 
-一套可在裸机上启动的**一次性、可审计**磁盘擦除环境：基于 Debian 12 (bookworm) +
-live-build 构建的 UEFI/BIOS 双引导 Live ISO，开机后自动在 tty1 以 root 启动一个
-Textual TUI，完成「阵列卡探测 → 磁盘枚举 → 干跑确认 → 串行提交擦除命令 → 生成证据 →
-上报」的完整闭环。
+一套可在裸机上启动的**一次性、可审计**的服务器存储运维环境：基于 Debian 12
+(bookworm) + live-build 构建的 UEFI/BIOS 双引导 Live ISO，开机后自动在 tty1 以
+root 启动 Textual TUI，完成「阵列卡探测 → RAID/物理盘查看 → RAID 创建/删除/清配置
+→ 磁盘枚举 → 干跑确认 → 串行提交擦除命令 → 生成证据 → 上报」的完整闭环。
 
 ```
 ┌──────────────────────────────────────────────────────────┐
 │ SN:xxx  tool:storcli  ctrl:1  disk:12  sel:2   net:up    │  ← 顶部固定状态栏
 ├──────────────────────────────────────────────────────────┤
 │                                                          │
-│   Dashboard / DiskList / ConfirmModal / ProgressScreen    │  ← 中间内容区
+│  Dashboard / Controllers / ControllerDetail / CreateRAID  │  ← RAID 管理
+│  DiskList / ConfirmModal / Progress / RaidProgress        │  ← 擦除与执行
 │                                                          │
 ├──────────────────────────────────────────────────────────┤
-│ Space 勾选   A 全选   N 清空   Enter 擦除   Q 退出        │  ← 底部固定快捷键栏
+│ Space 勾选   A 全选   N 清空   Enter 执行   Q 退出        │  ← 底部固定快捷键栏
 └──────────────────────────────────────────────────────────┘
    黑底白字（纯 #000000 / #FFFFFF，16 色控制台安全）
 ```
@@ -33,7 +34,7 @@ raidforge/
 ├── config/                       live-build 配置树
 │   ├── package-lists/*.list.chroot
 │   ├── includes.chroot/
-│   │   ├── usr/local/bin/        【需手动放入】storcli / arcconf / ssacli
+│   │   ├── usr/local/bin/        【需手动放入】storcli/storcli64、perccli/perccli64、arcconf、ssacli/hpssacli
 │   │   ├── etc/raidforge/        站点 env + 证据私钥（config.yaml 与 config.d/ 由 hook 在镜像内创建）
 │   │   └── etc/systemd/network/  10-raidforge-dhcp.network —— 所有非 lo 网卡 DHCP
 │   └── hooks/live/
@@ -51,24 +52,36 @@ raidforge/
 │       ├── main.py               编排：解析 SN → 建会话 → 录制 → TUI → 收尾 → 上报
 │       ├── config.py             唯一配置中心（defaults < config.yaml < config.d < RAIDFORGE_*）
 │       ├── core/
-│       │   ├── models.py         DiskInfo / CommandPlan / SubmitResult / EraseRun / DetectionResult…
+│       │   ├── models.py         DiskInfo / CommandPlan / EraseRun / VolumeInfo / RaidLayout / RaidBundle…
 │       │   ├── utils.py          run_cmd() —— 全项目 subprocess 唯一出口
 │       │   ├── serverid.py       dmidecode SN + 兜底阶梯
-│       │   ├── detect.py         storcli→arcconf→ssacli→sg3_utils 探测链
-│       │   ├── enum_disks.py     四厂商解析 + smartctl Rotation Rate 判介质
-│       │   ├── commands.py       命令表（纯函数，产出 argv 与干跑文本）
-│       │   ├── erase.py          串行执行，timeout=60，rc==0 记为 ASYNC_SUBMITTED
+│       │   ├── detect.py         探测链 storcli→perccli→arcconf→ssacli→sg3_utils（支持 64 位/别名）
+│       │   ├── enum_disks.py     多厂商物理盘解析 + smartctl Rotation Rate 判介质
+│       │   ├── scan.py           一次扫描：探测 + 枚举 + RAID 拓扑
+│       │   ├── commands.py       擦除命令表（纯函数，产出 argv 与干跑文本）
+│       │   ├── erase.py          擦除串行执行，timeout=60，rc==0 记为 ASYNC_SUBMITTED
+│       │   ├── raid/             RAID 核心层
+│       │   │   ├── base.py        provider 抽象接口
+│       │   │   ├── layout.py      级别校验 / RAID10 span 配对 / 容量 / 名称
+│       │   │   ├── commands.py    RAID0/1/5/10 创建、删除 VD、清配置命令表
+│       │   │   ├── lsi.py         storcli / perccli
+│       │   │   ├── adaptec.py     arcconf
+│       │   │   ├── hpe.py         ssacli / hpssacli
+│       │   │   ├── generic.py     无卡只读降级
+│       │   │   ├── collect.py     拓扑采集 + 能力判定
+│       │   │   └── execute.py     RAID 命令串行执行
 │       │   ├── evidence.py       会话目录 / events.jsonl / manifest.json + SHA-256
 │       │   ├── record.py         asciinema 包裹式录制
 │       │   ├── screenshots.py    export_screenshot() → snapshots/*.svg
 │       │   ├── svg_raster.py     内嵌 Rich SVG → PNG（仅 Pillow，无系统依赖）
-│       │   ├── erase_report.py   服务器维度 DOCX 报告（多轮汇总 + 截图）
+│       │   ├── erase_report.py   服务器维度 DOCX 擦除报告（多轮汇总 + 截图）
 │       │   ├── publish.py        每轮/退出共用的报告、manifest、上传编排
 │       │   └── report.py         rsync→HTTP→pending 三级上报 + 补传
 │       └── ui/
-│           ├── app.py / theme.py / state.py
-│           ├── widgets/{status_bar,key_bar,disk_table}.py
-│           └── screens/{dashboard,disk_list,confirm,progress,settings}.py
+│           ├── app.py / theme.py / state.py / scan.py
+│           ├── widgets/{status_bar,key_bar,disk_table,raid_tables}.py
+│           └── screens/{dashboard,controllers,controller_detail,raid_create,
+│                        raid_confirm,raid_progress,disk_list,confirm,progress,settings}.py
 │
 ├── receiver/                    最小接收端（FastAPI，仅 POST /sessions）
 ├── tests/
@@ -93,7 +106,16 @@ raidforge/
 │   ├── test_mono_static.py      黑白配色的静态守卫（CSS/主题/Rich 标记）
 │   ├── test_mono_live.py        渲染后的真实帧配色守卫（需镜像同版本 Textual）
 │   ├── test_quit_path.py        Progress 屏 Q 语义回归（需镜像同版本 Textual）
-│   ├── ui_smoke.py              四屏无头冒烟（80×25）
+│   ├── test_raid_layout.py      RAID0/1/5/10 规则、RAID0 分组、RAID10 配对
+│   ├── test_raid_commands.py    三厂商 RAID 创建/删除/清配置精确 argv
+│   ├── test_raid_parsers.py     storcli/arcconf/ssacli 拓扑解析
+│   ├── test_raid_eligibility.py 空闲盘资格与 blocked 原因
+│   ├── test_raid_execute.py     RAID 串行执行、失败继续、超时、取消
+│   ├── test_raid_evidence.py    raid_actions.json / manifest @2
+│   ├── test_raid_ui.py          RAID 屏幕与闸门（需 0.89.1）
+│   ├── test_detect_aliases.py   storcli64/perccli64/hpssacli 别名
+│   ├── test_rename_guard.py     旧命名残留守卫
+│   ├── ui_smoke.py              无头 UI 冒烟（80×25）
 │   ├── conftest.py
 │   └── fixtures/                伪造的 storcli JSON / arcconf JSON / ssacli detail / smartctl 输出
 ├── tools/
@@ -131,14 +153,16 @@ live-build 20230502 / 磁盘 ≥ 12 GB。低于 2 GB 内存时 `mksquashfs` 有 
 
 ### 2.2 厂商工具获取（必须手工放置）
 
-这三个 CLI 是厂商分发物，**不能随仓库分发**。把解压出的 ELF 二进制直接放进
-`config/includes.chroot/usr/local/bin/`，文件名必须精确为 `storcli` / `arcconf` / `ssacli`：
+这些 CLI 是厂商分发物，**不能随仓库分发**。把解压出的 ELF 二进制直接放进
+`config/includes.chroot/usr/local/bin/`，文件名必须精确为下表中的名字（64 位版本
+`storcli64`/`perccli64` 也可以直接放；镜像会按需创建兼容 shim）：
 
 | 工具 | 来源 | 常见包内路径 |
 |---|---|---|
-| `storcli` | Broadcom / OEM 支持页 → "StorCLI MR7.x" | `storcli_all_os/Linux/storcli`（有些包是 `univ_viva_cli_rel/storcli_all_os/Linux/storcli`） |
+| `storcli` / `storcli64` | Broadcom / OEM 支持页 → "StorCLI MR7.x" | `storcli_all_os/Linux/storcli`（有些包是 `univ_viva_cli_rel/storcli_all_os/Linux/storcli`） |
+| `perccli` / `perccli64` | Dell 支持页 → "PERC CLI" | `perccli` / `perccli64`（与 storcli 同语法） |
 | `arcconf` | Microsemi / Adaptec → "ARCCONF CLI" | `cmdline/arcconf`（也有 `ARCCONF_*.tar.gz`） |
-| `ssacli` | HPE Support Center → "SSA CLI" | `ssacli-*.rpm` → `usr/sbin/ssacli`；或 `.deb` → `dpkg-deb -x` |
+| `ssacli` / `hpssacli` | HPE Support Center → "SSA CLI" | `ssacli-*.rpm` → `usr/sbin/ssacli`；或 `.deb` → `dpkg-deb -x` |
 
 ```bash
 # storcli（示例）
@@ -161,11 +185,16 @@ chmod 755 config/includes.chroot/usr/local/bin/arcconf
 自检：
 
 ```bash
-./build.sh --preflight          # 缺一个就报错；只要跑通用模式可设 ALLOW_MISSING_TOOLS=1
+./build.sh --preflight          # 一个厂商 CLI 都没有时会报错；跑通用模式可设 ALLOW_MISSING_TOOLS=1
 ```
 
 > 一个都没有也没关系：镜像会以 `sg3_utils + smartctl + hdparm + nvme-cli` 的
-> **generic 模式**启动，但只能擦到操作系统直接可见的盘（RAID 卡后面的盘看不到）。
+> **generic 模式**启动，但只能擦到操作系统直接可见的盘（RAID 卡后面的盘看不到），
+> 且 RAID 管理功能全部禁用。
+
+**兼容 shim**：如果只放了 `storcli64` / `perccli64` / `hpssacli`，`010` hook 会在镜像内
+创建 `storcli` / `ssacli` shim，保证原有擦除命令表（argv[0] 固定为 canonical 名）
+不需要改动。RAID provider 则直接使用探测到的实际二进制。
 
 ---
 
@@ -532,11 +561,16 @@ HTTP 地址解析顺序：显式 `report.http_base_url` 优先；为空时由
 
 | 屏幕 | 内容 | 按键 |
 |---|---|---|
-| **Dashboard** | SN 与来源、会话、闸门提示、工具与控制器、HDD/SSD/UNKNOWN 计数、网络状态、优先传输方式、接收端 IP 与 HTTP 端点、最近一次报告/上传状态 | `Enter` 激活当前焦点按钮（无焦点时进磁盘列表）· `Tab` 切换焦点 · `S` 设置页 · `R` 重扫 · `U` 重刷待传 · `Q` 退出 |
+| **Dashboard** | SN 与来源、会话、闸门提示、工具与控制器、RAID 控制器/卷数量、HDD/SSD/UNKNOWN 计数、网络状态、优先传输方式、接收端 IP 与 HTTP 端点、最近一次报告/上传状态 | `Enter` 激活当前焦点按钮（无焦点时进磁盘列表）· `C` RAID 管理 · `Tab` 切换焦点 · `S` 设置页 · `R` 重扫 · `U` 重刷待传 · `Q` 退出 |
 | **Settings** | 只读的 SSH 身份（user/remote root）+ 可选 SSH/HTTP 优先通道 + 接收端 IPv4 与端口（SSH 默认 22，HTTP 默认 8080）+ 当前 HTTP 端点；保存后只探测选中通道 | 点 `[X] SSH` / `[ ] HTTP` 切换，端口随模式切换 · 输入 IP/端口后 `Enter` 保存 · 成功显示 `reachable`，失败显示 `saved, but <SSH|HTTP> check failed ... will try <另一种>, then queue locally`（配置保留） · `Esc` 返回 · `Q` 退出 |
+| **Controllers** | 每个探测到的阵列卡：控制器号、工具、型号、固件、VD 数、PD 数、能力（C/D/X） | `Enter` 详情 · `R` 重扫 · `E` 进入磁盘擦除 · `Esc` 返回 · `Q` 退出 |
+| **ControllerDetail** | 控制器详情、VD 表（级别/名称/状态/容量/成员）、物理盘表（位置/介质/容量/状态/VD 或 free/blocked） | `C` 新建 RAID · `D` 删除光标所在 VD · `X` 清除控制器配置 · `E` 擦除磁盘 · `R` 重扫 · `Tab` 切换表 · `Esc` 返回 |
+| **CreateRAID** | 级别、RAID0 模式、可选名称、可选空闲盘、span 预览、容量估算、warnings | `0/1/5/T` 选级别（T=RAID10）· `G` 切换 RAID0 单卷/一盘一卷 · `Space` 勾选 · `A` 全选空闲盘 · `N` 清空 · `Enter` 确认 · `Esc` 返回 |
+| **RaidConfirmModal** | 逐条 RAID 干跑命令、成员/容量/警告 | 输入 `yes`（创建/删除 VD）或控制器号（如 `c0`，清配置）后 `Enter`；`Esc` 取消 |
 | **DiskList** | 全量磁盘表，首列 `>` 是行光标，Sel/ID/位置/介质/协议/型号/序列号/容量/状态 | `↑`/`↓` 移动光标（`PgUp/PgDn/Home/End` 也可）· `Space` 勾选光标所在行 · `A` 全选可选盘 · `N` 清空 · `Enter` 擦除 · `Esc` 返回 |
-| **ConfirmModal** | 逐条**干跑命令**（shell 转义后逐字符即为真实 argv）、目标盘摘要、确认输入框 | 输入 `yes` 后 `Enter` 或点 Execute；`Esc` 取消 |
-| **Progress** | 逐条提交结果：磁盘/方法/状态/返回码/耗时 | `Esc` 返回 · `Q` 停止提交（运行中）/ 退出应用（已结束） |
+| **ConfirmModal** | 逐条**干跑擦除命令**（shell 转义后逐字符即为真实 argv）、目标盘摘要、确认输入框 | 输入 `yes` 后 `Enter` 或点 Execute；`Esc` 取消 |
+| **Progress** | 逐条擦除提交结果：磁盘/方法/状态/返回码/耗时 | `Esc` 返回 · `Q` 停止提交（运行中）/ 退出应用（已结束） |
+| **RaidProgress** | 逐条 RAID 命令结果 + 执行后重扫观察（confirmed / not_visible / mismatch） | `Esc` 返回 · `Q` 停止后续提交（运行中）/ 退出应用（已结束） |
 
 > 磁盘表进屏即获得键盘焦点，不用先按 `Tab`；`Tab` 只是把焦点从别处移回表格。
 > 光标是**首列的 `>` 文本标记**（不是背景色块）。16 色控制台上 Textual 的行高亮
@@ -561,6 +595,50 @@ HTTP 地址解析顺序：显式 `report.http_base_url` 优先；为空时由
 光标行白底黑字。**不要在深色背景上用"接近黑"的品牌色作前景**，这是这台设备上最容易被
 忽略的显示故障——文字在开发机的 256 色终端里一切正常，只有上机才看得见。
 
+### 6.1.2 RAID 管理（屏幕与流程）
+
+```
+Dashboard --C--> Controllers --Enter--> ControllerDetail
+                                              |-- C --> CreateRAID --> RaidConfirm(yes) --> RaidProgress --> 重扫
+                                              |-- D --> RaidConfirm(yes) ------------------> RaidProgress --> 重扫
+                                              |-- X --> RaidConfirm(c0) -------------------> RaidProgress --> 重扫
+                                              |-- E --> DiskList（原擦除流程，完全不变）
+                                              '-- R --> 重扫并刷新 VD/PD
+```
+
+**支持的级别与规则**
+
+| 级别 | 规则 | 容量估算 |
+|---|---|---|
+| RAID0（单 VD） | N ≥ 1，所有选中盘组成一个 VD | Σ size |
+| RAID0（一盘一 VD） | N ≥ 1，每块盘各建一个 RAID0 | 每 VD = 该盘容量 |
+| RAID1 | 恰好 2 块盘 | min(size) |
+| RAID5 | ≥ 3 块盘 | (N−1)×min(size) |
+| RAID10 | ≥ 4 且偶数，每个 span 恰好 2 块盘 | (N/2)×min(size) |
+
+- 只能选择**空闲盘**：不能是任何 VD 的成员、不能是 Foreign/Failed/Rebuilding，
+  且状态必须在该厂商白名单内（LSI `UGood`、Adaptec `Ready`、HPE `unassigned`）。
+  状态不确定时一律 blocked，绝不猜测。
+- RAID10 的 span 配对是确定性的：按控制器/位置排序后相邻两盘成一组，预览会显示
+  `1) e32/s0 + e32/s1 2) ...`。
+- 条带固定 `raid.stripe_kb`（默认 256K）；不显式设置缓存策略；不显式指定初始化方式，
+  走控制器默认（创建后可能仍在后台初始化，需重扫确认）。
+- 名称可选，清洗为 `[A-Za-z0-9_-]`，最长 `raid.name_max_len`（默认 15）；一盘一 VD
+  模式会自动加 `-d01`、`-d02` 后缀。
+
+**删除 VD / 清除配置**
+
+- `D` 删除光标所在 VD：LSI `delete force`、Adaptec `delete logicaldrive ... noprompt`、
+  HPE `ld ... delete forced`。成员盘随后回到空闲状态。
+- `X` 清除控制器配置：LSI `vall delete force` + `fall delete`；Adaptec
+  `delete array ALL noprompt` + `uninit all`；HPE `ld all delete forced` +
+  `modify clearconfig forced`。这会删除所有 VD，并清除 foreign/残余 RAID 元数据；
+  **不会**重置控制器的缓存/BBU 等设置。
+
+**执行语义**：命令串行提交，`rc==0` 只表示控制器接受；执行完会自动重扫并给出
+`confirmed`（目标 VD 已经可见）/ `not_visible`（固件仍在后台构建）/ `mismatch`。
+UI 不会把“已接受”写成“已完成”。
+
 ### 6.2 安全闸门（约束 8）
 
 1. **UNKNOWN 介质不可勾选**。`smartctl` 的 `Rotation Rate` 为空、或厂商 JSON 的 `Med`
@@ -569,7 +647,10 @@ HTTP 地址解析顺序：显式 `report.http_base_url` 优先；为空时由
 2. **必须先过 ConfirmModal**，屏幕上逐条列出将要执行的命令原文。
 3. **必须手工敲入 `yes`**（不分大小写）才能解锁；敲别的只提示不执行，且输入框会被清空，
    避免"再补一个字符就变成合法值"。
-4. 想先看看会执行什么而不动盘：`raidforge --dry-run --print-plan`（此时所有提交都是 `SKIPPED`）。
+4. **RAID 写操作有独立闸门**：创建 RAID / 删除 VD 输入 `yes`；清除整个控制器配置必须
+   输入控制器号（如 `c0`），不能用 `yes` 蒙混过关。RAID 闸门同样逐条展示 dry-run argv。
+5. 想先看看会执行什么而不动盘：`raidforge --dry-run --print-plan`
+   （擦除计划）或 `raidforge --print-raid-plan`（控制器/VD/空闲盘/能力，纯只读）。
 
 > 早期版本要求逐字敲入 `CONFIRM-{server_sn}`（VMware/派生 SN 下长达 40+ 字符），
 > 控制台键盘上输入成本过高且极易打错，已改为短确认词。`server_id.confirm_token`
@@ -582,6 +663,10 @@ HTTP 地址解析顺序：显式 `report.http_base_url` 优先；为空时由
 
 因此 Progress 屏里写的是 *submitted N/M*，没有任何百分比。这是刻意为之——
 `storcli/arcconf/ssacli` 的 erase 都是异步任务，谎报完成度比不报更危险。
+
+RAID 创建/删除同样不等待固件完成：`rc==0` 记为 `ACCEPTED`，随后自动重扫并记录
+`observed=confirmed|not_visible|mismatch`。例如新建 RAID10 后立即重扫可能还是
+`not_visible`，表示控制器仍在后台初始化，按 `R` 稍后复查即可。
 
 需要确认真实完成情况时，请在 TUI 退出后的 root shell 里用厂商工具自行查询，例如：
 
@@ -613,13 +698,18 @@ ssacli ctrl slot=0 pd all show status     # HPE
 ├── {server_sn}-raidforge-report-YYYYMMDD.docx   服务器维度擦除报告（一次启动一份）
 ├── snapshots/
 │   ├── 01-dashboard.svg
-│   ├── 02-disk-list.svg
-│   ├── 03-confirm.svg         ← 干跑命令 + 确认界面，核心审计材料
-│   ├── 04-progress.svg
-│   └── 05-settings.svg
+│   ├── 02-controllers.svg
+│   ├── 02b-controller-detail.svg
+│   ├── 02c-raid-create.svg
+│   ├── 03-disk-list.svg
+│   ├── 04-confirm.svg         ← 干跑命令 + 确认界面，核心审计材料
+│   ├── 04-raid-confirm.svg    ← RAID 创建/删除/清配置的干跑确认
+│   ├── 05-progress.svg
+│   └── 05-raid-progress.svg
+├── raid_actions.json         每次 RAID 写操作的完整记录（argv/rc/observed/前后拓扑）
 ├── controller_raw/           厂商工具原始输出（解析前），storcli JSON / ssacli detail / smartctl 等
 ├── server_id.json
-└── manifest.json         除自身外全部文件的 path/sha256/size 清单
+└── manifest.json         除自身外全部文件的 path/sha256/size 清单（schema @2）
 ```
 
 截图文件名里的序号由 `snapshot_counter` 递增决定（`01-`、`02-`…）；同一屏第二次出现时
@@ -634,6 +724,11 @@ ssacli ctrl slot=0 pd all show status     # HPE
 `erase_run_started` → `erase_submit_started` ×N → `erase_submit` ×N →
 `erase_run_finished` → `erase_run_recorded` → …（可多轮）→
 `report_generated` / `report_failed` → `upload` / `tui_stopped`；
+
+RAID 操作另有一条独立事件流：
+`raid_confirm_shown` → (`raid_confirm_rejected` | `raid_confirm_accepted` | `raid_confirm_cancelled`) →
+`raid_run_started` → `raid_submit_started` ×N → `raid_submit` ×N →
+`raid_run_finished` → `raid_run_recorded` → `raid_rescan_after`（含 `observed`）。
 `report_generated`、`report_failed`、`upload` 都带 `phase`（`run`=每轮结束，
 `exit`=Q 退出），`upload` 另带 `queued`（是否进入待传队列）。每轮结束会各出现一次，
 因此同一会话可有多条 `phase=run` 记录。
@@ -719,17 +814,36 @@ python3 -m raidforge --set report.transport=http --set report.http_port=8080
 
 ## 7. 阵列卡支持矩阵与命令表（约束 5/6/7）
 
-探测优先级固定为 **storcli → arcconf → ssacli → sg3_utils**，第一个「存在且能应答」的工具胜出，
-后续全部流程按该厂商走；每次探测（含失败）都写进 `attempts` 存证据。
+探测优先级固定为 **storcli → perccli → arcconf → ssacli → sg3_utils**，第一个「存在且能应答」的工具胜出，
+后续全部流程按该厂商走；每次探测（含失败）都写进 `attempts` 存证据。同一 rung 支持多个
+二进制名：`storcli/storcli64`、`perccli/perccli64`、`ssacli/hpssacli`。
 
 | 厂商 | 探测 | 枚举命令 | 介质判定 |
 |---|---|---|---|
-| LSI/Broadcom | `storcli show J` | `storcli /c{c}/eall/sall show J` | JSON 的 `Med`，缺失时回看 `Sp` 转速 |
+| LSI/Broadcom | `storcli show J`（或 `storcli64`） | `storcli /c{c}/eall/sall show J` | JSON 的 `Med`，缺失时回看 `Sp` 转速 |
+| Dell PERC | `perccli show J`（或 `perccli64`） | `perccli /c{c}/eall/sall show J` | 同 storcli（同一语法） |
 | PMC/Adaptec | `arcconf list` | `arcconf getconfigjson {c}`（失败回落 `arcconf getconfig {c} pd` 文本） | `MediaType`／`RotationRate` |
-| HPE | `ssacli ctrl all show` | `ssacli ctrl slot={c} pd all show detail` | `Rotational Speed` 含数字=HDD，含 Solid=SSD |
+| HPE | `ssacli ctrl all show`（或 `hpssacli`） | `ssacli ctrl slot={c} pd all show detail` | `Rotational Speed` 含数字=HDD，含 Solid=SSD |
 | Generic | `sg_scan` 存在 | `lsscsi -g` + `smartctl -i {dev}` + `nvme list -o json` | `Rotation Rate`（**唯一判据**） |
 
-命令构造集中在 `app/raidforge/core/commands.py`，改命令只需改那张表：
+**RAID 读取 / 管理命令**（`app/raidforge/core/raid/commands.py` 与各 provider）：
+
+| 厂商 | VD 列表/成员 | 创建 | 删除 VD | 清除配置 |
+|---|---|---|---|---|
+| LSI/PERC | `storcli /cN/vall show all J` | `add vd r0/r1/r5/r10 drives=E:S,... size=all strip=256 [pdperarray=2] [name=]` | `/cN/vM delete force` | `/cN/vall delete force` + `/cN/fall delete` |
+| Adaptec | `arcconf getconfigjson N` / `getconfig N ld` | `create N logicaldrive [stripesize 256] [name X] MAX <level> <ch> <dev>... noprompt` | `delete N logicaldrive M noprompt` | `delete N array ALL noprompt` + `uninit N all` |
+| HPE | `ssacli ctrl slot=N ld all show detail` + `pd all show` | `create type=ld drives=ref,... raid=0/1/5/1+0 ss=256 [label=X] forced` | `ld M delete forced` | `ld all delete forced` + `modify clearconfig forced` |
+| Generic | 无 | 不支持 | 不支持 | 不支持 |
+
+> ⚠️ **RAID 命令同样需要现场核对**：源码中标 `VERIFY` 的项包括
+> `vall delete force` 的 force 接受度、`arcconf stripesize/name` 的位置、
+> `uninit` 是否接受 `noprompt`、`ssacli clearconfig` 是否隐含删 LD、HPE 紧凑
+> `pd all show` 的 unassigned 分组、以及 RAID10 span 顺序。上线前请先用
+> `raidforge --print-raid-plan` 只读核对拓扑与空闲盘，再在实验室盘上按
+> 「RAID0 单卷 → RAID0 一盘一卷 → RAID1 → RAID5 → RAID10 → 删除 VD → 清除配置」
+> 顺序验证；确认后只改对应模板一行。
+
+命令构造集中在 `app/raidforge/core/commands.py`，改擦除命令只需改那张表：
 
 | 方法 | HDD | SSD |
 |---|---|---|
@@ -755,10 +869,11 @@ NVMe 时用 `sanitize`，其余一律 `blockerase` —— 不猜。
 ## 8. 测试
 
 ```bash
-pytest tests -q                      # 跨平台全量：依赖齐全时 151 项
+pytest tests -q                      # 跨平台全量；装齐依赖并使用 0.89.1 时全绿
 ./tools/check.sh                     # L0：bash -n + pytest + 探测链 mock + 80×25 UI 冒烟（~30s）
 tests/test_detection.sh --mock       # Linux/WSL/macOS：用伪造 CLI 跑真实进程链
 tests/test_detection.sh --real       # 在真机上打印它构造出的命令（不执行任何东西）
+raidforge --print-raid-plan          # 只读：控制器/VD/成员/空闲盘/能力
 ```
 
 镜像固定 Textual **0.89.1**（`app/requirements.txt`）。有 20 项测试直接驱动真实渲染
@@ -768,13 +883,13 @@ tests/test_detection.sh --real       # 在真机上打印它构造出的命令�
 DOCX 与截图相关测试（`test_svg_raster.py`、`test_erase_report.py`、`test_report_live.py`）
 需要 Pillow / python-docx，缺依赖时整模块 skip 而不是假通过。
 
-开发机（Windows + Textual 8.x、未装 python-docx/Pillow）看到
-`104 passed, 27 skipped` 是正常的；装齐依赖并使用 0.89.1 后应在构建主机或 `/root/tv`
-里全绿（151 项）。`tools/check.sh` 只会挑版本匹配的解释器做 UI 检查，不匹配时明确
+开发机（Windows + Textual 8.x、未装 python-docx/Pillow）会看到一部分 UI/DOCX
+测试被 skip；装齐依赖并使用 0.89.1 后应在构建主机或 `/root/tv` 里全绿。`tools/check.sh` 只会挑版本匹配的解释器做 UI 检查，不匹配时明确
 警告而不是给出误导性失败。
 
-`test_detection.sh` 覆盖五种情形：storcli 胜出 / 降级到 arcconf / 降级到 ssacli /
-降级到 sg3_utils / 一个工具都没有。`tests/fixtures/` 里的样例输出可以直接改成你们
+`test_detection.sh` 覆盖八种情形：storcli 胜出 / 降级到 arcconf / 降级到 ssacli /
+降级到 sg3_utils / 一个工具都没有 / storcli64 别名 + RAID 拓扑 /
+perccli64 别名 / hpssacli 别名。`tests/fixtures/` 里的样例输出可以直接改成你们
 机房真实机型的输出来做回归。
 
 ### 在构建主机上验证「镜像里真正跑的那个版本」
@@ -787,7 +902,7 @@ cd /root/raidforge
 rm -rf vendor/wheels && ./build.sh --vendor-only   # 拉齐 python-docx / Pillow / lxml
 python3 -m venv /root/tv
 /root/tv/bin/pip install --no-index --find-links vendor/wheels -r app/requirements.txt
-/root/tv/bin/python -m pytest tests -q    # 期望全绿（151 项，含两轮报告与真实 SVG 栅格化）
+/root/tv/bin/python -m pytest tests -q    # 期望全绿（含 RAID、两轮报告与真实 SVG 栅格化）
 /root/tv/bin/python tests/ui_smoke.py     # 五屏 + 勾选闸门 + token 闸门 + 证据落盘
 ```
 
@@ -829,12 +944,23 @@ Windows 的 Git Bash 会把 `/root/...` 改写成盘符路径，调用前加 `MS
 * **不等待擦除完成**，见 6.3。
 * 一次只处理「探测到的第一个厂商」的控制器；混合品牌机器请用
   `tools.forced_tool` 分次处理。
-* `ssacli` / `arcconf` 的部分高级擦除模式依赖固件支持，见 §7 的 VERIFY 提示。
+* RAID 管理仅支持硬件阵列卡，**不支持** mdadm 软件 RAID、NVMe VROC、
+  MegaCLI/sas2ircu 旧工具；不支持扩容/迁移/修复/热备盘管理。
+* 擦除流程**不阻止**选择 RAID 成员盘（保持原有擦除语义）；成员盘状态已在
+  DiskList 的 FW/RAID 列展示。请先在该控制器的 `D` 删除 VD，再擦除成员盘。
+* 新建 RAID 后控制器可能仍在后台初始化；重扫显示 `not_visible` 时按 `R` 复查，
+  不要把“已接受”当成“已可用”。
+* 清除控制器配置只删除 VD + foreign/残余元数据，**不会**重置缓存/BBU/控制器设置。
+* RAID 操作记录写入 `events.jsonl`、`controller_raw/`、`raid_actions.json` 和
+  `manifest.json`；现有 DOCX 报告仍只记录擦除轮次，未包含 RAID 章节。
+* `ssacli` / `arcconf` 的部分高级擦除模式和全部 RAID 命令依赖固件支持，见 §7 的
+  VERIFY 提示。
 * 接收端示例无鉴权，仅供内网使用；公网请加 mTLS/VPN。
 * 证据上传私钥随 ISO 分发且无口令；持有 ISO 等同于持有该接收账号的凭证。接收端应
   用 `authorized_keys` 的 `from=`/`restrict`/forced command 把权限限制到
   `/srv/evidence/incoming`。
-* 三个厂商 CLI 都没放进镜像时，只能擦到 OS 可见的直连盘（generic 模式）。
+* 所有厂商 CLI 都没放进镜像时，只能擦到 OS 可见的直连盘（generic 模式），
+  且 RAID 管理全部禁用。
 * TUI 设置页保存的传输方式、接收端 IP/端口、`http_base_url` 写在 Live 的 tmpfs 里，
   **重启即失效**；永久值要改 `010-install-app.hook.chroot` 的工厂模板后重建镜像。
 * 设置页的 SSH 探测只验证「密钥能登录 + 远端根目录可写」，**不验证接收端是否装了

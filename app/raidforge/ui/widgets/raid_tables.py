@@ -43,7 +43,12 @@ class CursorTable(DataTable):
         return None
 
     def _set_cell(self, key: str, column: str, value: str) -> None:
-        self.update_cell(key, column, value)
+        try:
+            self.update_cell(key, column, value)
+        except Exception:
+            # clear(columns=True) resets the cursor before the new columns are
+            # registered; the watcher must not crash the screen in that window.
+            pass
 
     def move_to_first(self) -> None:
         if self._row_keys:
@@ -56,6 +61,7 @@ class VolumeTable(CursorTable):
 
     def load_volumes(self, volumes: List[VolumeInfo]) -> None:
         self._volumes = list(volumes)
+        self._row_keys = []
         self.clear(columns=True)
         for label, key in zip(VOLUME_COLUMNS, VOLUME_KEYS):
             self.add_column(label, key=key)
@@ -102,6 +108,7 @@ class RaidDiskTable(CursorTable):
         free_ids: List[str],
         blocked: Dict[str, str],
     ) -> None:
+        self._row_keys = []
         self.clear(columns=True)
         for label, key in zip(PD_COLUMNS, PD_KEYS):
             self.add_column(label, key=key)

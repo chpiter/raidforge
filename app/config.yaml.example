@@ -19,7 +19,7 @@
 dry_run: false
 
 app_name: "raidforge"
-app_version: "1.0.0"
+app_version: "1.1.0"
 
 ui:
   # The palette is NOT configurable any more: the appliance runs on the bare
@@ -43,12 +43,20 @@ tools:
   enum_timeout: 30
   # Constraint 12: never wait more than 60s for a submit.
   command_timeout: 60
-  detection_order: ["storcli", "arcconf", "ssacli", "sg3_utils"]
+  detection_order: ["storcli", "perccli", "arcconf", "ssacli", "sg3_utils"]
   forced_tool: null          # e.g. "storcli" to skip the ladder
   enable_nvme: true
   vendor_bin_dir: "/usr/local/bin"
   default_hdd_method: "thorough"
   default_ssd_method: null   # null => sanitize when SED capable, else blockerase
+
+raid:
+  # RAID0/1/5/10 creation defaults.  The TUI currently fixes the stripe size
+  # and does not expose cache/initialisation policies.
+  stripe_kb: 256
+  command_timeout: 120
+  allow_clear_config: true
+  name_max_len: 15
 
 evidence:
   root: "/var/log/raidforge-evidence"

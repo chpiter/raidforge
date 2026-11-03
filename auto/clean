@@ -6,3 +6,8 @@ lb clean noauto "$@"
 rm -f build-start.stamp live-image-*.hybrid.iso.buildinfo
 rm -rf config/includes.chroot/usr/src/raidforge
 rm -rf config/includes.chroot/usr/src/raidforge-vendor
+
+# LEGACY MIGRATION BEGIN - remove staging trees left by the pre-raidforge name.
+rm -rf config/includes.chroot/usr/src/erase-app
+rm -rf config/includes.chroot/usr/src/erase-vendor
+# LEGACY MIGRATION END

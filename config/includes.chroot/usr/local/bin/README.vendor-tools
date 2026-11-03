@@ -1,44 +1,50 @@
 Drop the vendor RAID CLIs here before running ./build.sh
 =======================================================
 
-The three binaries are distributed by the vendors and CANNOT be shipped inside
-this repository. Put the decompressed ELF binaries straight into this directory
+The binaries are distributed by the vendors and CANNOT be shipped inside this
+repository.  Put the decompressed ELF binaries straight into this directory
 (no wrapper scripts, no directory named like the tool):
 
-    config/includes.chroot/usr/local/bin/storcli     LSI / Broadcom MegaRAID
-    config/includes.chroot/usr/local/bin/arcconf     PMC / Microsemi Adaptec
-    config/includes.chroot/usr/local/bin/ssacli      HPE Smart Array
+    storcli / storcli64     LSI / Broadcom MegaRAID
+    perccli / perccli64     Dell PERC (same CLI grammar as storcli)
+    arcconf                 Microchip / Adaptec SmartRAID
+    ssacli / hpssacli       HPE Smart Array
 
 Where they come from:
 
-  storcli   Broadcom (or your OEM's support page) -> "storcli - MR7.x" ->
-            unix/StorCLI_rel.zip  ->  unzip  ->  storcli*_ARM.zip? no:
-            take   storcli_all_os/Linux/storcli？ Standard layout after unzip:
-                    versionChangeSet/univ_viva_cli_rel/storcli_all_os/Linux/storcli
-            Rename it to `storcli`, chmod 755, drop it here.
+  storcli     Broadcom (or your OEM's support page) -> "storcli - MR7.x" ->
+              storcli_all_os/Linux/storcli (or storcli64).
+              Rename to `storcli` (or keep `storcli64`), chmod 755, drop it here.
 
-  arcconf   Microsemi / Adaptec -> "ARCCONF Command Line Utility" ->
-            arcconf_v3.*_linux_x64.tar.gz or the zip that contains the
-            cmdline/arcconf binary. Rename to `arcconf`, chmod 755.
+  perccli     Dell support -> "Dell EMC PERC Command Line Interface" ->
+              perccli / perccli64.  Keep the vendor binary name.
 
-  ssacli    HPE Support Center -> "Smart Storage Administrator CLI" ->
-            ssacli-*.x86_64.rpm works too:
-                rpm2cpio ssacli-*.rpm | cpio -idmv
-                cp usr/sbin/ssacli .../config/includes.chroot/usr/local/bin/
-            or use the .deb variant with dpkg-deb -x.
+  arcconf     Microchip / Adaptec -> "ARCCONF Command Line Utility" ->
+              arcconf_v3.*_linux_x64.tar.gz or the zip that contains the
+              cmdline/arcconf binary. Rename to `arcconf`, chmod 755.
+
+  ssacli      HPE Support Center -> "Smart Storage Administrator CLI" ->
+              ssacli-*.x86_64.rpm works too:
+                  rpm2cpio ssacli-*.rpm | cpio -idmv
+                  cp usr/sbin/ssacli .../config/includes.chroot/usr/local/bin/
+              or use the .deb variant with dpkg-deb -x.  Legacy hpssacli works.
 
 Verification before building:
 
-    for t in storcli arcconf ssacli; do
-        [ -x "config/includes.chroot/usr/local/bin/$t" ] && echo "$t ok"
+    for t in storcli storcli64 perccli perccli64 arcconf ssacli hpssacli; do
+        [ -f "config/includes.chroot/usr/local/bin/$t" ] && echo "$t present"
     done
 
 Notes:
 
 * Only the tools actually present are used; detection priority is
-  storcli -> arcconf -> ssacli -> sg3_utils.
+  storcli -> perccli -> arcconf -> ssacli -> sg3_utils.
+* If only a 64-bit or vendor-branded binary exists, 010-install-app.hook.chroot
+  creates a small compat shim (storcli -> storcli64/perccli64/perccli,
+  ssacli -> hpssacli) so the unchanged erase command table keeps working.
 * With no vendor tool present the image still works in "generic" mode using
   sg3_utils + smartctl + hdparm + nvme-cli, but it can only reach disks that are
-  directly visible to the OS (no disks behind a hardware RAID).
-* Keep the binary name exactly as shown - `core/detect.py` resolves them through
+  directly visible to the OS (no disks behind a hardware RAID, no RAID
+  management).
+* Keep the binary names exactly as shown - core/detect.py resolves them through
   PATH and expects those names.
