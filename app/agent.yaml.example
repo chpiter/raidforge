@@ -3,12 +3,14 @@
 # 运行时优先级：进程环境变量 RF_AGENT_* > /run/raidforge/agent.env >
 # /etc/raidforge/agent.yaml > 内置默认值。
 #
-# 禁止在此文件写入 token、私钥或注册码；token 只能运行时注入：
+# 禁止在此文件写入 token、私钥或注册码；token 优先级：
+#   - 进程环境变量 RF_AGENT_TOKEN
+#   - /run/raidforge/agent.env（tmpfs，0600）
 #   - 带标签 RAIDFORGE-CFG 的 U 盘 agent.env
 #   - 内核参数 rf.token=...
-#   - /run/raidforge/agent.env（tmpfs，0600）
+#   - 代码内置默认值 raidforge（生产必须更换）
 
-server_url: "https://control-plane.internal"
+server_url: "http://192.168.40.132:8080"   # http/https 均可；http 为明文传输
 api_prefix: "/api/raidforge"
 ca_bundle: ""                 # 自签证书时填写 PEM 路径
 poll_mode: "short"            # v1 只支持 short
@@ -24,5 +26,5 @@ operator:
   name: ""                    # 确认屏默认运维者
 server_sn_override: ""        # 仅探测失败时使用
 report_local_summary: false
-allow_insecure_http: false    # 仅回环地址允许 http
+allow_insecure_http: true     # 已废弃：HTTP 不再受此开关限制
 verify_tls: true

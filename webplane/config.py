@@ -30,13 +30,15 @@ class Settings:
     data_dir: Path = Path("webplane-data")
     db_path: Optional[Path] = None
     evidence_dir: Optional[Path] = None
-    agent_token: str = ""
+    session_dir: Optional[Path] = None
+    agent_token: str = "raidforge"
     protocol_version: int = 1
     lease_seconds: int = 900
     task_ttl_seconds: int = 3600
     agent_offline_seconds: int = 45
     max_evidence_bytes: int = 64 * 1024 * 1024
     max_task_evidence_bytes: int = 512 * 1024 * 1024
+    max_session_bytes: int = 512 * 1024 * 1024
     heartbeat_interval: int = 10
     poll_interval: int = 3
     static_dir: Optional[Path] = None
@@ -58,6 +60,11 @@ class Settings:
             if self.evidence_dir
             else self.data_dir / "evidence"
         )
+        self.session_dir = (
+            Path(self.session_dir).expanduser().resolve()
+            if self.session_dir
+            else self.data_dir / "sessions"
+        )
         if self.static_dir is not None:
             self.static_dir = Path(self.static_dir).expanduser().resolve()
         else:
@@ -67,6 +74,7 @@ class Settings:
         self.agent_offline_seconds = max(5, int(self.agent_offline_seconds))
         self.max_evidence_bytes = max(1, int(self.max_evidence_bytes))
         self.max_task_evidence_bytes = max(self.max_evidence_bytes, int(self.max_task_evidence_bytes))
+        self.max_session_bytes = max(1, int(self.max_session_bytes))
         self.heartbeat_interval = min(600, max(1, int(self.heartbeat_interval)))
         self.poll_interval = min(300, max(1, int(self.poll_interval)))
         self.max_task_attempts = max(1, int(self.max_task_attempts))
@@ -74,15 +82,20 @@ class Settings:
 
     @classmethod
     def from_env(cls) -> "Settings":
-        token = os.environ.get("WEBPLANE_AGENT_TOKEN", "") or os.environ.get(
-            "RAIDFORGE_CP_TOKEN", ""
-        )
+        token = os.environ.get("WEBPLANE_AGENT_TOKEN")
+        if token is None:
+            token = os.environ.get("RAIDFORGE_CP_TOKEN")
+        if token is None:
+            token = "raidforge"
         static_raw = os.environ.get("WEBPLANE_STATIC_DIR", "").strip()
         return cls(
             data_dir=Path(os.environ.get("WEBPLANE_DATA_DIR", "webplane-data")),
             db_path=Path(os.environ["WEBPLANE_DB"]) if os.environ.get("WEBPLANE_DB") else None,
             evidence_dir=Path(os.environ["WEBPLANE_EVIDENCE_DIR"])
             if os.environ.get("WEBPLANE_EVIDENCE_DIR")
+            else None,
+            session_dir=Path(os.environ["WEBPLANE_SESSION_DIR"])
+            if os.environ.get("WEBPLANE_SESSION_DIR")
             else None,
             agent_token=token.strip(),
             protocol_version=_env_int("WEBPLANE_PROTOCOL_VERSION", 1),
@@ -92,6 +105,9 @@ class Settings:
             max_evidence_bytes=_env_int("WEBPLANE_MAX_EVIDENCE_BYTES", 64 * 1024 * 1024),
             max_task_evidence_bytes=_env_int(
                 "WEBPLANE_MAX_TASK_EVIDENCE_BYTES", 512 * 1024 * 1024
+            ),
+            max_session_bytes=_env_int(
+                "WEBPLANE_MAX_SESSION_BYTES", 512 * 1024 * 1024
             ),
             heartbeat_interval=_env_int("WEBPLANE_HEARTBEAT_INTERVAL", 10),
             poll_interval=_env_int("WEBPLANE_POLL_INTERVAL", 3),
@@ -106,6 +122,7 @@ class Settings:
     def ensure_dirs(self) -> None:
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self.evidence_dir.mkdir(parents=True, exist_ok=True)
+        self.session_dir.mkdir(parents=True, exist_ok=True)
         if self.db_path is not None:
             self.db_path.parent.mkdir(parents=True, exist_ok=True)
 

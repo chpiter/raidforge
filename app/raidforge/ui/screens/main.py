@@ -11,6 +11,7 @@ from textual.containers import Vertical
 from textual.screen import Screen
 from textual.widgets import ContentSwitcher
 
+from .. import logbus
 from ..messages import (
     AgentStatusChanged,
     BreadcrumbChanged,
@@ -39,6 +40,7 @@ from ..state import AppState
 from ..tasks import TaskRunner, make_task, refresh_job
 from ..widgets.breadcrumb import Breadcrumb
 from ..widgets.hotkey_bar import HotkeyBar
+from ..widgets.message_panel import MessagePanel
 from ..widgets.nav_bar import NavBar
 from ..widgets.status_bar import StatusBar
 from ..widgets.agent_status import AgentStatus
@@ -95,6 +97,8 @@ class MainScreen(FocusLabelMixin, Screen):
                 for page in PageId:
                     yield PAGE_CLASSES[page](self.state)
             yield HotkeyBar("", id="hotkey-bar")
+        with Vertical(id="message-dock"):
+            yield MessagePanel()
 
     def on_mount(self) -> None:
         self.state.set_page(PageId.DASHBOARD)
@@ -118,6 +122,7 @@ class MainScreen(FocusLabelMixin, Screen):
             refresh_job(self.state.services, RefreshScope.ALL),  # type: ignore[arg-type]
         )
         self.state.spawn(self._probe_network, name="network-probe")
+        self.set_interval(0.25, self._drain_messages)
         self._start_agent()
 
     def _start_agent(self) -> None:
@@ -293,14 +298,21 @@ class MainScreen(FocusLabelMixin, Screen):
 
     def on_toast(self, message: Toast) -> None:
         self.state.last_message = message.text
-        severity = {"warn": "warning", "error": "error"}.get(message.level, "information")
+        self._push_message(message.text, message.level)
+
+    def _drain_messages(self) -> None:
+        lines = logbus.buffer().drain()
+        if not lines:
+            return
         try:
-            self.app.notify(
-                message.text,
-                severity=severity,
-                timeout=max(3.0, float(getattr(message, "timeout", 3.0))),
-            )
-        except Exception:  # pragma: no cover - older Textual
+            self.query_one(MessagePanel).extend(lines)
+        except Exception:  # pragma: no cover - panel may be unmounting
+            pass
+
+    def _push_message(self, text: str, level: str = "info") -> None:
+        try:
+            self.query_one(MessagePanel).push(text, level)
+        except Exception:  # pragma: no cover - panel may be unmounting
             pass
 
     def on_data_refreshed(self, message: DataRefreshed) -> None:
@@ -310,6 +322,8 @@ class MainScreen(FocusLabelMixin, Screen):
             self.request_snapshot("10-dashboard")
 
     def on_task_state_changed(self, message: TaskStateChanged) -> None:
+        if message.log_line:
+            self._push_message(message.log_line, "info")
         self._update_chrome()
 
     def on_report_status_changed(self, message: ReportStatusChanged) -> None:
@@ -329,16 +343,12 @@ class MainScreen(FocusLabelMixin, Screen):
         self._update_chrome()
 
     def on_task_finished(self, message: TaskFinished) -> None:
-        level = "information" if message.status == "finished" else "warning"
-        try:
-            self.app.notify(
-                f"远程任务 {message.remote_task_id}: {message.status}"
-                + (f" ({message.error_code})" if message.error_code else ""),
-                severity=level,
-                timeout=5.0,
-            )
-        except Exception:
-            pass
+        level = "info" if message.status == "finished" else "warn"
+        self._push_message(
+            f"远程任务 {message.remote_task_id}: {message.status}"
+            + (f" ({message.error_code})" if message.error_code else ""),
+            level,
+        )
         self._update_chrome()
 
     def on_remote_task_confirm_requested(self, message: RemoteTaskConfirmRequested) -> None:

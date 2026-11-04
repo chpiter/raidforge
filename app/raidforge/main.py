@@ -239,8 +239,16 @@ def _inner_argv(args: argparse.Namespace) -> List[str]:
 def run_direct(ctx: AppContext) -> int:
     """Run the TUI in this process."""
 
+    from pathlib import Path
+
+    from .ui import logbus
+
     app = create_app(ctx)
-    app.run(mouse=False)
+    logbus.install(Path("/var/log/raidforge-agent/ui.log"))
+    try:
+        app.run(mouse=False)
+    finally:
+        logbus.restore()
     manifest = finalize_session(ctx, publish=False)
     log.info("session %s finalised with %s files", ctx.evidence.session_id, manifest.get("file_count"))
     return EXIT_OK

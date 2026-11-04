@@ -64,9 +64,12 @@ webplane-test:    ## run control-plane unit tests
 webplane-web:     ## build the Vue frontend into webplane/web/dist
 	cd webplane/web && npm run build
 
+webplane-deploy:  ## build, sync and restart webplane on 192.168.40.132:8080
+	./tools/deploy_webplane.sh
+
 help:
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-16s\033[0m %s\n", $$1, $$2}'
 
 .PHONY: build build-no-vendor vendor preflight clean clean-all plan run test check pytest compile \
-        webplane webplane-test webplane-web help \
+        webplane webplane-test webplane-web webplane-deploy help \
         sync sync-all sync-watch remote-build remote-sh

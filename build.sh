@@ -11,7 +11,7 @@
 #   ./build.sh --preflight     # only run the environment checks
 #   ./build.sh --full-clean    # drop caches, rebuild everything from scratch
 #   ./build.sh --clean         # lb clean --all and remove staging artefacts
-#   ./build.sh --server-url https://cp.internal --api-prefix /api/raidforge
+#   ./build.sh --server-url http://192.168.40.132:8080 --api-prefix /api/raidforge
 #                              # 生成 /etc/raidforge/agent.yaml（不含 token）
 #   ./build.sh --poll-mode short --ca-bundle /etc/raidforge/ca.pem
 #
@@ -55,7 +55,7 @@ SQUASH_TYPE="xz"
 SQUASH_LEVEL=""
 ISO_SUFFIX=""
 BUILD_ID_WANT=""
-AGENT_SERVER_URL=""
+AGENT_SERVER_URL="http://192.168.40.132:8080"
 AGENT_API_PREFIX="/api/raidforge"
 AGENT_POLL_MODE="short"
 AGENT_CA_BUNDLE=""
@@ -165,7 +165,7 @@ preflight() {
     # into the build as "/usr/bin/env: '/root/xxx.hook.chroot': No such file or
     # directory", which is impossible to debug from there.
     local crlf_files
-    crlf_files="$(grep -rIl --exclude-dir=node_modules --exclude-dir=dist --exclude-dir=webplane-data --exclude-dir=__pycache__ $'\r' build.sh Makefile auto config tools tests app webplane 2>/dev/null | head -5 || true)"
+    crlf_files="$(grep -rIl --exclude-dir=node_modules --exclude-dir=dist --exclude-dir=webplane-data --exclude-dir=.venv --exclude-dir=venv --exclude-dir=__pycache__ $'\r' build.sh Makefile auto config tools tests app webplane 2>/dev/null | head -5 || true)"
     if [[ -n "$crlf_files" ]]; then
         printf '%s\n' "$crlf_files" >&2
         die "CRLF line endings found above - run dos2unix (or tools/lf.sh) and retry"
@@ -181,8 +181,11 @@ write_agent_config() {
     local target="config/includes.chroot/etc/raidforge/agent.yaml"
     mkdir -p "$(dirname "$target")"
     [[ "$AGENT_POLL_MODE" == "short" ]] || die "v1 only supports --poll-mode short"
-    if [[ -n "$AGENT_SERVER_URL" && "$AGENT_SERVER_URL" != https://* ]]; then
-        die "--server-url must use https:// (http is loopback-only at runtime)"
+    if [[ -n "$AGENT_SERVER_URL" && "$AGENT_SERVER_URL" != http://* && "$AGENT_SERVER_URL" != https://* ]]; then
+        die "--server-url must start with http:// or https://"
+    fi
+    if [[ "$AGENT_SERVER_URL" == http://* ]]; then
+        warn "--server-url 使用明文 http://（证据与令牌不加密，仅限受控内网）"
     fi
     cat > "$target" <<EOF
 # 由 build.sh 生成；只包含非秘密键。token 只能运行时注入。
@@ -202,7 +205,7 @@ operator:
   name: ""
 server_sn_override: ""
 report_local_summary: false
-allow_insecure_http: false
+allow_insecure_http: true
 verify_tls: true
 EOF
     log "agent config -> ${target}"

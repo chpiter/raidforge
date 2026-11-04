@@ -8,7 +8,7 @@ from pathlib import Path
 from flask import Flask, jsonify, request
 
 from . import __version__
-from .api import agent_api, control_api
+from .api import agent_api, control_api, evidence_api
 from .auth import ApiError, error_response
 from .config import Settings
 from .db import close_db, init_db
@@ -26,12 +26,15 @@ def create_app(settings: Settings | None = None) -> Flask:
 
     app = Flask(__name__, static_folder=None)
     app.config["SETTINGS"] = settings
-    app.config["MAX_CONTENT_LENGTH"] = settings.max_evidence_bytes + 16 * 1024 * 1024
+    app.config["MAX_CONTENT_LENGTH"] = (
+        max(settings.max_evidence_bytes, settings.max_session_bytes) + 16 * 1024 * 1024
+    )
     app.json.ensure_ascii = False
 
     app.teardown_appcontext(close_db)
     app.register_blueprint(agent_api.bp)
     app.register_blueprint(control_api.bp)
+    app.register_blueprint(evidence_api.bp)
 
     @app.get("/healthz")
     def healthz():

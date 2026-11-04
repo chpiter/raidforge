@@ -154,6 +154,9 @@ class ReportConfig:
         default_factory=lambda: ["-o", "StrictHostKeyChecking=no", "-o", "BatchMode=yes"]
     )
     http_base_url: str = ""
+    #: HTTP evidence receiver host.  Empty means "follow the webplane URL",
+    #: which only applies when ``transport`` is ``http``.
+    http_host: str = ""
     http_port: int = 8080
     http_timeout: float = 30.0
     pending_root: str = "/var/lib/raidforge/pending"
@@ -182,6 +185,35 @@ class ReportConfig:
 
 
 @dataclass
+class WebplaneConfig:
+    """Control-plane endpoint; empty host inherits the Agent's server_url."""
+
+    host: str = ""
+    port: int = 8080
+    scheme: str = "http"
+    api_prefix: str = "/api/raidforge"
+
+    def __post_init__(self) -> None:
+        host = str(self.host or "").strip()
+        if "://" in host:
+            from urllib.parse import urlsplit
+
+            parsed = urlsplit(host)
+            host = parsed.hostname or ""
+            if parsed.scheme in {"http", "https"}:
+                self.scheme = parsed.scheme
+            if parsed.port:
+                self.port = parsed.port
+        self.host = host.rstrip("/")
+        self.scheme = "https" if str(self.scheme or "").lower() == "https" else "http"
+        self.port = _coerce_port(self.port, 8080, "webplane.port")
+        prefix = str(self.api_prefix or "/api/raidforge").strip()
+        if not prefix.startswith("/"):
+            prefix = "/" + prefix
+        self.api_prefix = "/" + prefix.strip("/")
+
+
+@dataclass
 class Config:
     """Root configuration object threaded through every module."""
 
@@ -193,6 +225,7 @@ class Config:
     raid: RaidConfig = field(default_factory=RaidConfig)
     evidence: EvidenceConfig = field(default_factory=EvidenceConfig)
     report: ReportConfig = field(default_factory=ReportConfig)
+    webplane: WebplaneConfig = field(default_factory=WebplaneConfig)
 
     # --- convenience accessors -------------------------------------------------
     @property
@@ -418,6 +451,9 @@ def _build(data: Dict[str, Any]) -> Config:
     cfg.raid = _construct(RaidConfig, {**asdict(RaidConfig()), **(data.get("raid") or {})})
     cfg.evidence = _construct(EvidenceConfig, {**asdict(EvidenceConfig()), **(data.get("evidence") or {})})
     cfg.report = _construct(ReportConfig, {**asdict(ReportConfig()), **(data.get("report") or {})})
+    cfg.webplane = _construct(
+        WebplaneConfig, {**asdict(WebplaneConfig()), **(data.get("webplane") or {})}
+    )
     return cfg
 
 

@@ -92,20 +92,67 @@ def http_url_for(host: str, port: int, scheme: str = "http", path: str = "") -> 
     return f"{scheme}://{host}:{int(port)}{suffix}".rstrip("/")
 
 
-def http_endpoint(cfg: Config) -> str:
-    """Return the effective HTTP base URL.
+def _normalise_base(value: str) -> str:
+    base = str(value or "").strip()
+    if base and "://" not in base:
+        base = "http://" + base
+    return base.rstrip("/")
 
-    An explicit ``report.http_base_url`` wins (it may carry HTTPS or a path
-    prefix).  Otherwise the URL is derived from the receiver IP and
-    ``report.http_port``, so the single Settings page controls both channels.
+
+def _legacy_derived_base(report) -> str:
+    """The value the old Settings page wrote on every save."""
+
+    return http_url_for(report.ssh_host, report.http_port)
+
+
+def webplane_url(cfg: Config) -> str:
+    """Resolve the control-plane base URL (scheme://host:port, no api prefix)."""
+
+    webplane = getattr(cfg, "webplane", None)
+    if webplane is not None and str(getattr(webplane, "host", "") or "").strip():
+        scheme = str(getattr(webplane, "scheme", "http") or "http")
+        return http_url_for(webplane.host, webplane.port, scheme)
+    try:
+        from ..agent.config import DEFAULT_SERVER_URL, AgentConfig
+
+        return _normalise_base(AgentConfig.load().server_url or DEFAULT_SERVER_URL)
+    except Exception:  # pragma: no cover - agent config is always importable
+        return ""
+
+
+def http_endpoint_for(report, webplane: str = "") -> str:
+    """Pure endpoint resolver used by the settings preview and tests."""
+
+    base = _normalise_base(getattr(report, "http_base_url", ""))
+    if base and base != _legacy_derived_base(report):
+        return base
+    host = str(getattr(report, "http_host", "") or "").strip()
+    if host:
+        return http_url_for(host, report.http_port)
+    if normalize_transport(getattr(report, "transport", "ssh")) == "http":
+        return _normalise_base(webplane)
+    return _legacy_derived_base(report)
+
+
+def http_endpoint(cfg: Config) -> str:
+    """Return the effective HTTP evidence base URL.
+
+    Priority: an explicit ``http_base_url`` (unless it is the legacy value the
+    old Settings page derived from ``ssh_host``), then ``http_host``, then the
+    webplane endpoint when HTTP is the preferred channel, then the historical
+    ``ssh_host:http_port`` fallback.
     """
 
-    base = str(cfg.report.http_base_url or "").strip()
-    if base:
-        if "://" not in base:
-            base = "http://" + base
-        return base.rstrip("/")
-    return http_url_for(cfg.report.ssh_host, cfg.report.http_port)
+    report = cfg.report
+    base = _normalise_base(report.http_base_url)
+    if base and base != _legacy_derived_base(report):
+        return base
+    host = str(report.http_host or "").strip()
+    if host:
+        return http_url_for(host, report.http_port)
+    if normalize_transport(report.transport) == "http":
+        return _normalise_base(webplane_url(cfg))
+    return _legacy_derived_base(report)
 
 
 def ordered_transports(cfg: Config) -> List[str]:
@@ -270,14 +317,14 @@ def check_ssh(cfg: Config, timeout: float = 5.0) -> SshCheck:
     return SshCheck(False, f"ssh check exit {outcome.return_code}", detail)
 
 
-def check_http(cfg: Config, timeout: float = 5.0) -> ProbeCheck:
+def check_http(cfg: Config, timeout: float = 5.0, endpoint: str = "") -> ProbeCheck:
     """Probe the HTTP receiver with a read-only ``GET /healthz``.
 
     Deliberately never POSTs a session: saving an IP must not create an empty
     upload on the collector.  Any failure is returned, never raised.
     """
 
-    endpoint = http_endpoint(cfg)
+    endpoint = _normalise_base(endpoint) or http_endpoint(cfg)
     if not endpoint:
         return ProbeCheck(False, "no http receiver configured (set receiver IP or http_base_url)")
 

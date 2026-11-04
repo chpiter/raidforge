@@ -13,6 +13,7 @@ from ..db import get_db
 from ..services import agents as agent_service
 from ..services import evidence as evidence_service
 from ..services import tasks as task_service
+from ..services import topology as topology_service
 from ..task_types import get_task_type, get_task_types
 from ..timeutil import iso, utcnow
 from ..validation import validate_task_params
@@ -145,6 +146,44 @@ def agent_tasks(agent_id: str):
         page_size=page_size,
     )
     return jsonify({"items": items, "total": total, "page": page, "page_size": page_size})
+
+
+@bp.get("/agents/<agent_id>/controllers")
+def agent_controllers(agent_id: str):
+    settings = _settings()
+    conn = get_db()
+    row = agent_service.get_agent(conn, agent_id)
+    if row is None:
+        raise ApiError("agent 不存在", code="agent_not_found", status=404)
+    now = utcnow()
+    agent_payload = agent_service.agent_payload(
+        row, now, settings.agent_offline_seconds
+    )
+    controllers = topology_service.controller_summaries(
+        conn, row, now, settings.agent_offline_seconds
+    )
+    return jsonify(
+        {
+            "agent_id": agent_payload["agent_id"],
+            "server_sn": agent_payload["server_sn"],
+            "hostname": agent_payload["hostname"],
+            "status": agent_payload["status"],
+            "last_heartbeat_at": agent_payload["last_heartbeat_at"],
+            "controllers": controllers,
+        }
+    )
+
+
+@bp.get("/agents/<agent_id>/controllers/<controller_id>")
+def agent_controller_detail(agent_id: str, controller_id: str):
+    conn = get_db()
+    row = agent_service.get_agent(conn, agent_id)
+    if row is None:
+        raise ApiError("agent 不存在", code="agent_not_found", status=404)
+    detail = topology_service.controller_detail(conn, row, controller_id, now=utcnow())
+    if detail is None:
+        raise ApiError("控制器不存在", code="controller_not_found", status=404)
+    return jsonify(detail)
 
 
 @bp.get("/tasks")

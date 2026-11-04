@@ -1,7 +1,8 @@
 #!/bin/bash
 #
 # Agent runtime directories.  Never write credentials here: the token is
-# injected at runtime through /run/raidforge/agent.env or a labelled USB.
+# runtime-injected via /run/raidforge/agent.env or a labelled USB.  The Agent
+# code carries the factory fallback "raidforge"; production must override it.
 #
 set -Eeuo pipefail
 

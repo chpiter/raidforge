@@ -72,6 +72,45 @@ def test_http_endpoint_prefers_explicit_base_and_adds_scheme():
     assert report.http_endpoint(cfg) == ""
 
 
+def test_http_transport_defaults_to_webplane():
+    cfg = _cfg(transport="http", http_host="")
+    cfg.webplane.host = "192.168.40.132"
+    cfg.webplane.port = 8080
+    assert report.http_endpoint(cfg) == "http://192.168.40.132:8080"
+
+
+def test_explicit_http_host_wins_over_webplane():
+    cfg = _cfg(transport="http", http_host="evidence.local", http_port=9000)
+    cfg.webplane.host = "192.168.40.132"
+    cfg.webplane.port = 8080
+    assert report.http_endpoint(cfg) == "http://evidence.local:9000"
+
+
+def test_ssh_transport_keeps_legacy_http_fallback():
+    cfg = _cfg(transport="ssh")
+    assert report.http_endpoint(cfg) == "http://10.0.0.5:8080"
+
+
+def test_legacy_derived_base_is_ignored_for_http_transport():
+    cfg = _cfg(
+        transport="http",
+        http_base_url="http://10.0.0.5:8080",
+        http_port=8080,
+    )
+    cfg.webplane.host = "1.2.3.4"
+    cfg.webplane.port = 8080
+    assert report.http_endpoint(cfg) == "http://1.2.3.4:8080"
+
+
+def test_explicit_non_legacy_base_still_wins():
+    cfg = _cfg(
+        transport="http",
+        http_base_url="https://collector.example/root/",
+    )
+    cfg.webplane.host = "1.2.3.4"
+    assert report.http_endpoint(cfg) == "https://collector.example/root"
+
+
 def test_ordered_transports_follows_preference():
     assert report.ordered_transports(_cfg(transport="ssh")) == ["ssh", "http"]
     assert report.ordered_transports(_cfg(transport="http")) == ["http", "ssh"]

@@ -10,7 +10,7 @@ from webplane.timeutil import utcnow
 
 
 def test_concurrent_claim_has_no_duplicates(tmp_path):
-    settings = Settings(data_dir=tmp_path, maintenance=False)
+    settings = Settings(data_dir=tmp_path, maintenance=False, agent_token="")
     init_db(settings)
     conn = connect(settings.db_path)
     try:

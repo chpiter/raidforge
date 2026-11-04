@@ -32,6 +32,7 @@ class TaskPoller:
         self.runtime = runtime
         self.clock = clock or SystemClock()
         self._stop = threading.Event()
+        self._wake = threading.Event()
         self._thread: Optional[threading.Thread] = None
 
     def start(self) -> None:
@@ -42,8 +43,14 @@ class TaskPoller:
 
     def stop(self, timeout: float = 2.0) -> None:
         self._stop.set()
+        self._wake.set()
         if self._thread is not None:
             self._thread.join(timeout=timeout)
+
+    def wake(self) -> None:
+        """Interrupt the poll wait after a control-plane change."""
+
+        self._wake.set()
 
     # -- loop ---------------------------------------------------------------
     def _loop(self) -> None:
@@ -54,7 +61,9 @@ class TaskPoller:
                 log.exception("轮询异常: %s", exc)
             interval = float(self.runtime.agent_cfg.poll_interval_short)
             interval += random.uniform(0.0, float(self.runtime.agent_cfg.poll_jitter_ms) / 1000.0)
-            if self._stop.wait(interval):
+            self._wake.wait(interval)
+            self._wake.clear()
+            if self._stop.is_set():
                 break
 
     def poll_once(self) -> int:

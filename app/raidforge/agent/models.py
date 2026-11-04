@@ -250,6 +250,7 @@ class AgentResult:
     def to_dict(self) -> Dict[str, Any]:
         return {
             "schema_version": SCHEMA_VERSION,
+            "task_id": self.task_id,
             "agent_id": self.agent_id,
             "lease_id": self.lease_id,
             "status": self.status.value,

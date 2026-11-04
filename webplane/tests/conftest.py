@@ -17,7 +17,7 @@ from webplane.config import Settings  # noqa: E402
 
 @pytest.fixture
 def settings(tmp_path):
-    return Settings(data_dir=tmp_path, maintenance=False)
+    return Settings(data_dir=tmp_path, maintenance=False, agent_token="")
 
 
 @pytest.fixture

@@ -80,8 +80,10 @@ report:
   ssh_key_path: "/etc/raidforge/keys/evidence_ed25519"
   ssh_remote_root: "/srv/evidence/incoming"
   ssh_extra_opts: ["-o", "StrictHostKeyChecking=no", "-o", "BatchMode=yes"]
-  # Explicit full URL wins; leave empty to derive http://<ssh_host>:<http_port>.
-  http_base_url: "http://collector.example.internal:8080"
+  # HTTP evidence receiver.  Empty host + transport=http follows webplane.
+  http_host: ""
+  # Explicit full URL wins; leave empty (the TUI clears its legacy derived value).
+  http_base_url: ""
   http_port: 8080
   http_timeout: 30
   # Best-effort upload after each erase run (TUI stays live); failures are not
@@ -89,3 +91,10 @@ report:
   run_upload_seconds: 30
   pending_root: "/var/lib/raidforge/pending"
   uploaded_root: "/var/lib/raidforge/uploaded"
+
+# Control plane endpoint; an empty host inherits /etc/raidforge/agent.yaml.
+webplane:
+  host: ""
+  port: 8080
+  scheme: "http"
+  api_prefix: "/api/raidforge"

@@ -11,6 +11,32 @@ Screen {
     color: $foreground;
 }
 
+MainScreen {
+    layers: default messages;
+}
+
+/* Floating message box: docked in its own layer so #pages keeps all rows. */
+#message-dock {
+    layer: messages;
+    dock: bottom;
+    width: 100%;
+    height: auto;
+    align: right bottom;
+    margin-bottom: 1;
+    background: transparent;
+}
+
+#message-panel {
+    width: 50%;
+    max-width: 60;
+    height: 5;
+    background: $surface;
+    color: $foreground;
+    border: round $border;
+    padding: 0 1;
+    overflow: hidden;
+}
+
 #app-root {
     width: 100%;
     height: 100%;
@@ -458,6 +484,7 @@ Tree:focus > .tree--cursor {
     height: 100%;
     border-left: solid $border;
     padding: 0 1;
+    padding-bottom: 5;
 }
 
 #evidence-tree {
@@ -465,9 +492,11 @@ Tree:focus > .tree--cursor {
 }
 
 #report-status {
-    height: 7;
-    border-top: solid $border;
+    height: auto;
+    max-height: 10;
+    border-bottom: solid $border;
     padding: 0 1;
+    overflow: hidden;
 }
 
 #report-status .section-title {
@@ -496,12 +525,34 @@ Tree:focus > .tree--cursor {
     width: 78%;
     height: 100%;
     padding: 0 1;
+    padding-bottom: 6;
     overflow-y: auto;
 }
 
 #settings-form Input {
     height: 3;
     margin: 0 0 1 0;
+}
+
+#settings-form .settings-row {
+    height: 3;
+    layout: horizontal;
+}
+
+#settings-form .settings-row Input {
+    width: 1fr;
+    margin: 0 1 0 0;
+}
+
+#settings-form .settings-row Input.port {
+    width: 9;
+    margin: 0;
+}
+
+#settings-form .settings-row Select {
+    width: 10;
+    height: 3;
+    margin: 0;
 }
 
 #settings-form .form-actions {

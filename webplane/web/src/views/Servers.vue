@@ -1,6 +1,6 @@
 <template>
   <div class="rf-page">
-    <PageHeader title="Agents" subtitle="已注册的 raidforge-agent">
+    <PageHeader title="服务器" subtitle="已注册的 RaidForge Agent 服务器">
       <template #actions>
         <el-button :loading="loading" @click="run">刷新</el-button>
       </template>
@@ -15,21 +15,24 @@
           <el-option label="离线" value="offline" />
           <el-option label="未知" value="unknown" />
         </el-select>
-        <el-input v-model="query" placeholder="搜索 agent / SN / 型号" clearable style="width: 260px" />
+        <el-input v-model="query" placeholder="搜索服务器 / SN / 型号" clearable style="width: 280px" />
         <div class="spacer" />
-        <span class="rf-muted">共 {{ total }} 个</span>
+        <span class="rf-muted">共 {{ total }} 台</span>
       </div>
 
-      <el-table :data="agents" style="margin-top: 12px" @row-click="openAgent">
+      <el-table :data="servers" style="margin-top: 12px" @row-click="openServer">
         <el-table-column label="状态" width="90">
           <template #default="{ row }"><StatusTag :status="row.status" /></template>
         </el-table-column>
-        <el-table-column prop="agent_id" label="Agent ID" min-width="180" show-overflow-tooltip />
-        <el-table-column prop="server_sn" label="服务器 SN" min-width="150" />
-        <el-table-column label="型号" min-width="170">
+        <el-table-column prop="agent_id" label="服务器" min-width="190" show-overflow-tooltip />
+        <el-table-column prop="server_sn" label="序列号" min-width="150" />
+        <el-table-column label="厂商 / 型号" min-width="180">
           <template #default="{ row }">{{ [row.vendor, row.model].filter(Boolean).join(' ') || '-' }}</template>
         </el-table-column>
         <el-table-column prop="hostname" label="主机名" width="140" show-overflow-tooltip />
+        <el-table-column label="阵列卡" width="90" align="center">
+          <template #default="{ row }">{{ row.capabilities?.controllers?.length || 0 }}</template>
+        </el-table-column>
         <el-table-column prop="agent_version" label="版本" width="90" />
         <el-table-column label="最后心跳" width="110">
           <template #default="{ row }">{{ relativeTime(row.last_heartbeat_at) }}</template>
@@ -45,7 +48,7 @@
         </el-table-column>
         <el-table-column label="" width="80" align="right">
           <template #default="{ row }">
-            <el-button link type="primary" @click.stop="openAgent(row)">详情</el-button>
+            <el-button link type="primary" @click.stop="openServer(row)">进入</el-button>
           </template>
         </el-table-column>
       </el-table>
@@ -74,7 +77,7 @@ import { getAgents } from '../api'
 import { relativeTime, usePolling } from '../composables/usePolling'
 
 const router = useRouter()
-const agents = ref([])
+const servers = ref([])
 const total = ref(0)
 const status = ref('')
 const query = ref('')
@@ -88,7 +91,7 @@ const { run, loading, error } = usePolling(async () => {
     page: page.value,
     page_size: pageSize.value
   })
-  agents.value = data.items || []
+  servers.value = data.items || []
   total.value = data.total || 0
 }, 5000)
 
@@ -102,5 +105,5 @@ const onSizeChange = () => {
   run()
 }
 
-const openAgent = (row) => router.push(`/agents/${encodeURIComponent(row.agent_id)}`)
+const openServer = (row) => router.push(`/servers/${encodeURIComponent(row.agent_id)}`)
 </script>

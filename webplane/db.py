@@ -102,6 +102,19 @@ CREATE TABLE IF NOT EXISTS evidence (
     UNIQUE(task_id, filename)
 );
 CREATE INDEX IF NOT EXISTS ix_evidence_task ON evidence(task_id);
+
+CREATE TABLE IF NOT EXISTS controller_snapshots (
+    agent_id         TEXT NOT NULL REFERENCES agents(agent_id) ON DELETE CASCADE,
+    controller_id    TEXT NOT NULL,
+    pds_json         TEXT NOT NULL DEFAULT '[]',
+    vds_json         TEXT NOT NULL DEFAULT '[]',
+    pds_collected_at TEXT NOT NULL DEFAULT '',
+    vds_collected_at TEXT NOT NULL DEFAULT '',
+    topology_hash    TEXT NOT NULL DEFAULT '',
+    updated_at       TEXT NOT NULL,
+    PRIMARY KEY (agent_id, controller_id)
+);
+CREATE INDEX IF NOT EXISTS ix_snapshots_agent ON controller_snapshots(agent_id);
 """
 
 

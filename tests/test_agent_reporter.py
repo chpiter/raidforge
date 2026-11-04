@@ -5,6 +5,7 @@ from pathlib import Path
 from raidforge.agent.client import Response
 from raidforge.agent.evidence import TaskEvidence
 from raidforge.agent.evidence_uploader import EvidenceUploader
+from raidforge.agent.models import AgentResult
 from raidforge.agent.reporter import ResultReporter
 from raidforge.agent.state import StateStore
 
@@ -18,6 +19,23 @@ def _payload():
         "status": "finished",
         "evidence": {"status": "pending", "manifest": []},
     }
+
+
+def test_result_payload_includes_task_id(tmp_path: Path):
+    result = AgentResult(
+        task_id="tsk_01JB8Z4Q2M",
+        agent_id="rf-test",
+        lease_id="lse_7f3c9a1b",
+    )
+    payload = result.to_dict()
+    assert payload["task_id"] == "tsk_01JB8Z4Q2M"
+
+    store = StateStore(tmp_path / "state", clock=FakeClock())
+    client = FakeClient()
+    reporter = ResultReporter(client, store, FakeClock())
+    assert reporter.deliver(payload) is True
+    assert client.calls[0][0] == "result"
+    assert client.calls[0][1][0] == "tsk_01JB8Z4Q2M"
 
 
 def test_result_success_drops_pending(tmp_path: Path):

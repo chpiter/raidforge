@@ -2,7 +2,19 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from raidforge.agent.config import AgentConfig
+from raidforge.agent.config import AgentConfig, DEFAULT_SERVER_URL, DEFAULT_TOKEN
+
+
+def test_default_control_plane_and_token(tmp_path: Path):
+    config = AgentConfig.load(
+        yaml_path=tmp_path / "missing.yaml",
+        run_env=tmp_path / "missing.env",
+        env={},
+        cmdline=tmp_path / "cmdline",
+    )
+    assert config.server_url == DEFAULT_SERVER_URL == "http://192.168.40.132:8080"
+    assert config.token == DEFAULT_TOKEN == "raidforge"
+    assert config.configured is True
 
 
 def test_precedence_env_over_run_env_over_yaml(tmp_path: Path):
@@ -36,24 +48,33 @@ def test_api_prefix_normalised(tmp_path: Path):
     assert config.base_url == "https://host.example/api/raidforge"
 
 
-def test_http_only_loopback_allowed(tmp_path: Path):
-    config = AgentConfig.load(
+def test_http_any_host_allowed(tmp_path: Path):
+    remote = AgentConfig.load(
         yaml_path=tmp_path / "missing.yaml",
         run_env=tmp_path / "missing.env",
         env={"RF_AGENT_SERVER_URL": "http://192.168.1.10:8080"},
         cmdline=tmp_path / "cmdline",
     )
-    assert config.server_url == ""
+    assert remote.server_url == "http://192.168.1.10:8080"
+
     loopback = AgentConfig.load(
         yaml_path=tmp_path / "missing.yaml",
         run_env=tmp_path / "missing.env",
-        env={
-            "RF_AGENT_SERVER_URL": "http://127.0.0.1:8080",
-            "RF_AGENT_ALLOW_INSECURE_HTTP": "true",
-        },
+        env={"RF_AGENT_SERVER_URL": "http://127.0.0.1:8080"},
         cmdline=tmp_path / "cmdline",
     )
     assert loopback.server_url == "http://127.0.0.1:8080"
+
+
+def test_invalid_server_url_still_rejected(tmp_path: Path):
+    for url in ("ftp://host", "http://", "not-a-url"):
+        config = AgentConfig.load(
+            yaml_path=tmp_path / "missing.yaml",
+            run_env=tmp_path / "missing.env",
+            env={"RF_AGENT_SERVER_URL": url},
+            cmdline=tmp_path / "cmdline",
+        )
+        assert config.server_url == ""
 
 
 def test_token_from_run_env_and_redacted(tmp_path: Path):

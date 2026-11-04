@@ -15,6 +15,10 @@ ENV_PREFIX = "RF_AGENT_"
 DEFAULT_YAML = Path("/etc/raidforge/agent.yaml")
 DEFAULT_RUN_ENV = Path("/run/raidforge/agent.env")
 DEFAULT_CMD_LINE = Path("/proc/cmdline")
+#: 出厂默认控制面；可被 agent.yaml / env / /run env / U 盘 / 内核参数覆盖。
+DEFAULT_SERVER_URL = "http://192.168.40.132:8080"
+#: 出厂默认共享令牌；生产部署必须更换。运行时注入的 token 优先级更高。
+DEFAULT_TOKEN = "raidforge"
 
 _FIELD_ENV = {
     "SERVER_URL": "server_url",
@@ -100,6 +104,58 @@ def _read_yaml(path: Path) -> Dict[str, Any]:
     return payload if isinstance(payload, dict) else {}
 
 
+def normalize_server_url(value: str) -> str:
+    """Return a valid http(s) base URL without a trailing slash, or ``""``."""
+
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    parsed = urlparse(text)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        return ""
+    return text.rstrip("/")
+
+
+def write_run_env(
+    values: Dict[str, str],
+    path: Optional[Path] = None,
+    remove: tuple[str, ...] = (),
+) -> Path:
+    """Merge ``RF_AGENT_*`` values into the tmpfs run-env file.
+
+    Existing comments and the token line survive; only the supplied fields are
+    replaced.  The file is owner-only and replaced atomically.
+    """
+
+    target = Path(path) if path is not None else DEFAULT_RUN_ENV
+    target.parent.mkdir(parents=True, exist_ok=True)
+    wanted = {str(key).upper() for key in values}
+    wanted.update(str(key).upper() for key in remove)
+    lines = []
+    try:
+        text = target.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        text = ""
+    for raw in text.splitlines():
+        line = raw.rstrip()
+        if not line or line.startswith("#") or "=" not in line:
+            lines.append(line)
+            continue
+        key = line.split("=", 1)[0].strip()
+        bare = key[len(ENV_PREFIX) :] if key.startswith(ENV_PREFIX) else key
+        if bare.upper() in wanted:
+            continue
+        lines.append(line)
+    for key, value in values.items():
+        env_key = key if key.startswith(ENV_PREFIX) else ENV_PREFIX + str(key).upper()
+        lines.append(f"{env_key}={value}")
+    temp = target.with_name(f".{target.name}.tmp")
+    temp.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    os.chmod(temp, 0o600)
+    os.replace(temp, target)
+    return target
+
+
 def _cmdline_token(path: Path) -> str:
     try:
         parts = path.read_text(encoding="utf-8", errors="replace").split()
@@ -131,14 +187,9 @@ def _usb_token() -> str:
     return ""
 
 
-def _is_loopback(host: str) -> bool:
-    name = (host or "").strip().lower()
-    return name in {"localhost", "127.0.0.1", "::1", "[::1]"}
-
-
 @dataclass
 class AgentConfig:
-    server_url: str = ""
+    server_url: str = DEFAULT_SERVER_URL
     api_prefix: str = "/api/raidforge"
     ca_bundle: str = ""
     poll_mode: str = "short"
@@ -153,9 +204,10 @@ class AgentConfig:
     operator_name: str = ""
     server_sn_override: str = ""
     report_local_summary: bool = False
+    # 已废弃：HTTP 不再受此开关限制，仅保留以兼容旧配置。
     allow_insecure_http: bool = False
     verify_tls: bool = True
-    token: str = field(default="", repr=False, compare=False)
+    token: str = field(default=DEFAULT_TOKEN, repr=False, compare=False)
     #: 由 server_sn 确定性推导；可由 runtime/selftest 填充。
     agent_id: str = ""
 
@@ -222,13 +274,16 @@ class AgentConfig:
         if overrides:
             config._apply(overrides, source="overrides")
 
-        # token 不在 yaml 中；只允许运行时注入
-        if not config.token:
-            config.token = environ.get("RF_AGENT_TOKEN", "") or _parse_env_file(run_env).get("token", "")
-        if not config.token:
-            config.token = _usb_token()
-        if not config.token:
-            config.token = _cmdline_token(cmdline)
+        # token 不在 yaml 中；只允许运行时注入。运行时来源优先于出厂默认值。
+        discovered = environ.get("RF_AGENT_TOKEN", "") or _parse_env_file(run_env).get("token", "")
+        if not discovered:
+            discovered = _usb_token()
+        if not discovered:
+            discovered = _cmdline_token(cmdline)
+        if discovered:
+            config.token = discovered
+        elif not config.token:
+            config.token = DEFAULT_TOKEN
         if yaml_path.is_file():
             try:
                 if "token" in yaml_path.read_text(encoding="utf-8", errors="replace"):
@@ -281,18 +336,25 @@ class AgentConfig:
             self.verify_tls = True
 
         if self.server_url:
-            parsed = urlparse(self.server_url)
-            if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+            normalized = normalize_server_url(self.server_url)
+            if not normalized:
                 log.warning("server_url=%r 非法；Agent 进入未配置状态", self.server_url)
                 self.server_url = ""
-            elif parsed.scheme == "http" and not (
-                self.allow_insecure_http and _is_loopback(parsed.hostname or "")
-            ):
-                log.warning("非回环地址不允许 http://；Agent 进入未配置状态")
-                self.server_url = ""
+            else:
+                self.server_url = normalized
+                if urlparse(normalized).scheme == "http":
+                    log.debug("server_url 使用明文 http://：%s", self.server_url)
 
         if self.ca_bundle and not Path(self.ca_bundle).is_file():
             log.warning("ca_bundle=%s 不存在；仍按配置使用", self.ca_bundle)
 
 
-__all__ = ["AgentConfig", "DEFAULT_RUN_ENV", "DEFAULT_YAML", "ENV_PREFIX"]
+__all__ = [
+    "AgentConfig",
+    "DEFAULT_RUN_ENV",
+    "DEFAULT_SERVER_URL",
+    "DEFAULT_TOKEN",
+    "DEFAULT_YAML",
+    "ENV_PREFIX",
+    "normalize_server_url",
+]

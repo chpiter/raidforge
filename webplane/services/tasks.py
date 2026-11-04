@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -10,7 +11,10 @@ from ..db import transaction
 from ..ids import new_lease_id, new_task_id
 from ..jsonutil import dumps, loads
 from ..timeutil import iso, parse_iso, utcnow
+from . import topology as topology_service
 from .events import record_event, list_events
+
+log = logging.getLogger(__name__)
 
 TERMINAL = {"finished", "failed", "cancelled", "expired"}
 PHASES = {
@@ -336,6 +340,7 @@ def finish_task(
         supplied = idempotency_key.split(":", 1)[-1]
     if row["status"] in TERMINAL:
         if supplied and supplied == (row["lease_id"] or ""):
+            _ingest_topology(conn, row, payload, now)
             return row, True
         raise ApiError("任务已终态", code="task_terminal", status=409)
     _require_lease(row, supplied)
@@ -392,7 +397,27 @@ def finish_task(
             actor="agent",
             now=now,
         )
+    if status == "finished":
+        _ingest_topology(conn, row, payload, now)
     return get_task(conn, task_id), False
+
+
+def _ingest_topology(conn, row, payload: Dict[str, Any], now: datetime) -> None:
+    if str(payload.get("status") or "") != "finished":
+        return
+    try:
+        params = loads(row["params_json"], {})
+        controller_ids = params.get("controller_ids") if isinstance(params, dict) else None
+        topology_service.ingest_result(
+            conn,
+            row["agent_id"],
+            row["type"],
+            payload,
+            now=now,
+            controller_ids=controller_ids if isinstance(controller_ids, list) else None,
+        )
+    except Exception:  # pragma: no cover - cache must never break the task
+        log.warning("topology ingest failed for %s", row["task_id"], exc_info=True)
 
 
 def release_task(

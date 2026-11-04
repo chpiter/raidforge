@@ -13,9 +13,9 @@
           <el-icon><Odometer /></el-icon>
           <span>概览</span>
         </el-menu-item>
-        <el-menu-item index="/agents">
+        <el-menu-item index="/servers">
           <el-icon><Monitor /></el-icon>
-          <span>Agents</span>
+          <span>服务器</span>
         </el-menu-item>
         <el-menu-item index="/tasks">
           <el-icon><List /></el-icon>
@@ -35,7 +35,7 @@
         </div>
       </el-header>
       <el-main class="main">
-        <router-view />
+        <router-view :key="route.fullPath" />
       </el-main>
     </el-container>
   </el-container>
@@ -48,7 +48,7 @@ import { useRoute, useRouter } from 'vue-router'
 const route = useRoute()
 const router = useRouter()
 const active = computed(() => {
-  if (route.path.startsWith('/agents')) return '/agents'
+  if (route.path.startsWith('/servers') || route.path.startsWith('/agents')) return '/servers'
   if (route.path.startsWith('/tasks')) return '/tasks'
   return '/'
 })

@@ -47,10 +47,11 @@ raidforge/
 │       └── 900-cleanup.hook.chroot        清理构建残留、写 /etc/raidforge-build-info
 │
 ├── app/
-│   ├── run.py / pyproject.toml / requirements.txt / config.yaml.example
+│   ├── run.py / pyproject.toml / requirements.txt / config.yaml.example / agent.yaml.example
 │   └── raidforge/
 │       ├── main.py               编排：解析 SN → 建会话 → 录制 → TUI → 收尾 → 上报
 │       ├── config.py             唯一配置中心（defaults < config.yaml < config.d < RAIDFORGE_*）
+│       ├── agent/                Agent 客户端：心跳/轮询/串行执行/确认/证据/补传
 │       ├── core/
 │       │   ├── models.py         DiskInfo / CommandPlan / EraseRun / VolumeInfo / RaidLayout / RaidBundle…
 │       │   ├── utils.py          run_cmd() —— 全项目 subprocess 唯一出口
@@ -115,6 +116,9 @@ raidforge/
 │   ├── test_raid_ui.py          RAID 屏幕与闸门（需 7.5.0）
 │   ├── test_detect_aliases.py   storcli64/perccli64/hpssacli 别名
 │   ├── test_rename_guard.py     旧命名残留守卫
+│   ├── test_agent_config.py     Agent 默认控制面/token、HTTP/HTTPS、配置优先级
+│   ├── test_agent_*.py          Agent 客户端/队列/心跳/轮询/执行/证据/恢复
+│   ├── test_remote_task_confirm_ui.py  远程破坏性任务确认屏（严格 yes）
 │   ├── ui_smoke.py              无头 UI 冒烟（80×25）
 │   ├── conftest.py
 │   └── fixtures/                伪造的 storcli JSON / arcconf JSON / ssacli detail / smartctl 输出
@@ -219,6 +223,19 @@ chmod 755 config/includes.chroot/usr/local/bin/arcconf
 保留缓存时 `lb clean` 只做 `--binary --chroot`，`cache/bootstrap/`（整棵树）和
 `cache/packages.*` 都留着，重复构建直接从 chroot 阶段起步，省掉约 700 MB 下载；
 需要干净的 chroot / 换过镜像源时再加 `--full-clean`。
+
+**Agent 控制面参数**（生成 `/etc/raidforge/agent.yaml`，不写 token）：
+
+```bash
+./build.sh --server-url http://192.168.40.132:8080 \
+           --api-prefix /api/raidforge \
+           --poll-mode short \
+           --ca-bundle /etc/raidforge/ca.pem   # 可选，仅 HTTPS 使用
+```
+
+`--server-url` 默认 `http://192.168.40.132:8080`，HTTP/HTTPS 均可；`--poll-mode`
+v1 只接受 `short`。Agent 的默认 token 是 `raidforge`（见 §5.2.2），不会写进
+`agent.yaml`，可由运行时环境覆盖。
 
 `build.sh` 在清理之后会做一次**缓存一致性检查**：`.build/<stage>` 标记还在、
 但对应的 `bootstrap/`（或 `chroot/`）目录已经不存在时，自动把这些标记删掉重新
@@ -395,7 +412,11 @@ IP、用户名、私钥这些参数**只在两个地方**有实际作用：仓�
 | 接收端地址/端口（现场值） | 不用改仓库：TUI Dashboard 按 `S` | `/etc/raidforge/config.d/90-site.yaml` | TUI 设置页保存 | **仅本次开机**（Live 的 `/etc` 是 tmpfs） |
 | `ssh_user` / `ssh_key_path` / `ssh_remote_root` | 同一 hook 的 `report:` 段 | `/etc/raidforge/config.yaml` | 构建 hook；TUI 只读 | 永久；可被 `config.d/*.yaml` 或 `RAIDFORGE_REPORT_*` 覆盖 |
 | `ssh_port` / `http_port`（出厂 22 / 8080） | 同一 hook 的 `report:` 段 | `/etc/raidforge/config.yaml` | 构建 hook；TUI 可改 | 永久默认；TUI 写入仅本次开机 |
-| `http_base_url`（完整 URL 覆盖） | 同一 hook 或 `config.d` | `/etc/raidforge/config.yaml` | 构建 hook；TUI 保存时按 IP+端口重写 | 永久默认；TUI 写入仅本次开机 |
+| `http_host` / `http_port`（HTTP 证据接收端） | 同一 hook 或 `config.d` | `/etc/raidforge/config.yaml` | 构建 hook；TUI 可改；`http_host` 为空且 `transport=http` 时跟随 webplane | 永久默认；TUI 写入仅本次开机 |
+| `http_base_url`（完整 URL 覆盖） | 同一 hook 或 `config.d` | `/etc/raidforge/config.yaml` | 手工显式设置；TUI 保存时清空旧自动推导值 | 永久默认；TUI 写入仅本次开机 |
+| webplane 地址/端口 `webplane.host/port/scheme` | 不用改仓库：TUI Settings → Connection | `/etc/raidforge/config.d/90-site.yaml` + `/run/raidforge/agent.env` | TUI 设置页保存并立即重连 Agent | **仅本次开机**（Live 的 `/etc`、`/run` 都是 tmpfs） |
+| Agent 控制面 URL `server_url` | `build.sh --server-url`（默认 `http://192.168.40.132:8080`） | `/etc/raidforge/agent.yaml` | `build.sh` 生成；可被 `RF_AGENT_SERVER_URL` / `/run/raidforge/agent.env` 覆盖 | 烘进镜像；运行时环境优先 |
+| Agent token | 代码默认 `raidforge`；运行时可覆盖 | 内存 / `/run/raidforge/agent.env` | `RF_AGENT_TOKEN`、U 盘 `RAIDFORGE-CFG/agent.env`、内核参数 `rf.token=` | **不落盘**；生产必须更换 |
 | 证据上传私钥 | `config/includes.chroot/etc/raidforge/keys/evidence_ed25519`（文件名必须与 `ssh_key_path` 的 basename 一致） | `/etc/raidforge/keys/evidence_ed25519`（目录 0700 / 文件 0600） | 人工放置一次；`sync.sh` 默认上传 | 永久（每次构建进 squashfs） |
 | `RAIDFORGE_REPORT_*` 环境变量 | `config/includes.chroot/etc/raidforge/env` | `/etc/raidforge/env` | 人工（默认全部注释） | 永久；优先级最高，会盖掉 TUI |
 
@@ -459,7 +480,7 @@ chmod 600 config/includes.chroot/etc/raidforge/keys/evidence_ed25519
 | # | 位置 | 谁写 | 内容 | 何时用 |
 |---|---|---|---|---|
 | 1 | `/etc/raidforge/config.yaml` | 构建期工厂模板（`010-install-app.hook.chroot` 每次构建重新生成） | `transport: ssh`、`ssh_host: 192.168.40.129`、user `evidence`、key `/etc/raidforge/keys/evidence_ed25519`、`ssh_port: 22`、`http_port: 8080`、remote root `/srv/evidence/incoming` | 改**出厂默认值**（烘进镜像，永久生效） |
-| 2 | `/etc/raidforge/config.d/90-site.yaml` | TUI `S` 设置页（或手工写） | TUI 写入 `report.transport`、`ssh_host`、`ssh_port`、`http_port`、`http_base_url`；其它键保留 | 现场临时改传输方式/地址/端口 |
+| 2 | `/etc/raidforge/config.d/90-site.yaml` | TUI `S` 设置页（或手工写） | TUI 写入 `report.transport`、`ssh_host`、`ssh_port`、`http_host`、`http_port`、`http_base_url: ""` 与 `webplane.host/port/scheme`；其它键保留 | 现场临时改传输方式/地址/端口/控制面 |
 | 3 | `/etc/raidforge/env` 里的 `RAIDFORGE_*` | 人工 | 任意配置项（`__` 分隔层级，如 `RAIDFORGE_REPORT_TRANSPORT`） | 调试/自动化；**优先级最高**，默认注释掉 |
 
 - **日常改接收端**：开机 → Dashboard 按 `S` → 选择 `SSH` 或 `HTTP`（选中的方式优先，
@@ -489,8 +510,14 @@ report:
   ssh_port: 22
   ssh_key_path: "/etc/raidforge/keys/evidence_ed25519"
   ssh_remote_root: "/srv/evidence/incoming"
-  http_base_url: ""
+  http_host: ""          # 空 = transport=http 时跟随 webplane
+  http_base_url: ""      # 显式完整 URL 覆盖（一般留空）
   http_port: 8080
+webplane:
+  host: ""               # 空 = 跟随 /etc/raidforge/agent.yaml 的 server_url
+  port: 8080
+  scheme: http
+  api_prefix: "/api/raidforge"
 ```
 
 #### 上传失败排查（擦除完成后在 Tasks/Evidence 页或 root shell 里）
@@ -514,9 +541,11 @@ rsync**。
 心跳、任务下发、进度与结果回收、证据上传和取消控制。**UI 与 `/api/cp` 不做认证**，
 只能部署在内网/VPN 后。
 
-> 旧的 `receiver/` 与 `POST /sessions` 证据接收接口已移除。TUI 的证据上传请使用
-> SSH/rsync（§5.1）；`GET /healthz` 保留为兼容探活别名，设置页的 HTTP 探测仍可用，
-> 但 HTTP 证据上传不再有服务端接收。
+> webplane 现在同时提供证据接收端 `POST /sessions`（multipart `file` + `server_sn`
+> + `session_id`，tar.gz 解包到 `WEBPLANE_SESSION_DIR`，带路径穿越/链接校验与
+> sha256 去重）。`GET /healthz` 继续用于设置页探活；HTTP 证据上传的默认目标就是
+> webplane 的地址/端口（`report.http_host` 为空且 `transport=http` 时）。
+> 该端点与 UI/`/api/cp` 一样不做认证，只能部署在内网/VPN 后。
 
 启动（开发机需要 Python 3.11+ 与 Node 20+）：
 
@@ -534,16 +563,19 @@ WEBPLANE_DATA_DIR=/srv/raidforge-control python -m webplane
 
 | 变量 | 默认 | 说明 |
 |---|---|---|
-| `WEBPLANE_DATA_DIR` | `./webplane-data` | SQLite 与证据根目录 |
-| `WEBPLANE_AGENT_TOKEN` / `RAIDFORGE_CP_TOKEN` | 空 | 设置后校验 `X-Raidforge-Token`；空则不校验 |
+| `WEBPLANE_DATA_DIR` | `./webplane-data` | SQLite、任务证据与 `sessions/` 根目录 |
+| `WEBPLANE_SESSION_DIR` | `<data>/sessions` | HTTP `POST /sessions` 的会话归档目录 |
+| `WEBPLANE_MAX_SESSION_BYTES` | `536870912` | 单个 HTTP 会话归档上限（512 MiB） |
+| `WEBPLANE_AGENT_TOKEN` / `RAIDFORGE_CP_TOKEN` | `raidforge` | 校验 `X-Raidforge-Token`；显式设为空串则关闭校验 |
 | `WEBPLANE_LEASE_SECONDS` | `900` | 任务租约时长（覆盖 agent 确认屏） |
 | `WEBPLANE_AGENT_OFFLINE_SECONDS` | `45` | 超过该时间无心跳判离线 |
 | `WEBPLANE_PORT` / `WEBPLANE_HOST` | `8080` / `0.0.0.0` | 监听地址 |
 
-Agent 侧配置：`api_prefix: /api/raidforge`；`server_url` 对非回环地址必须是
-`https://`（agent 拒绝明文远程 HTTP），本机联调可用 `http://127.0.0.1:8080` 并设置
-`allow_insecure_http: true`。生产建议在 webplane 前放 TLS 反向代理。token 按 §9 的
-`RF_AGENT_TOKEN` / U 盘 / cmdline 方式注入。控制面端点（与 agent 客户端一致）：
+Agent 侧默认配置：`server_url: http://192.168.40.132:8080`、`api_prefix:
+/api/raidforge`、`token: raidforge`。`server_url` 支持 `http://` 与 `https://`，
+不再限制回环地址；HTTP 为明文传输（令牌与证据不加密），建议只在受控内网使用。
+服务端 agent token 默认也是 `raidforge`（`WEBPLANE_AGENT_TOKEN`），两端一致即可
+直接联调；token 不写入 `agent.yaml`。控制面端点（与 agent 客户端一致）：
 
 ```
 POST /api/raidforge/agent/heartbeat
@@ -553,6 +585,69 @@ POST /api/raidforge/agent/tasks/{task_id}/started|progress|evidence|result|relea
 GET  /api/raidforge/agent/tasks/{task_id}/cancel_requested
 ```
 
+#### 5.2.1 UI 层级：服务器 → 阵列卡 → 硬盘/RAID
+
+前端不再以“任务”为第一入口，而是按现场对象组织：
+
+1. **服务器**（`/servers`）：已注册 agent 列表，显示在线状态、SN、型号、阵列卡数量、
+   最后心跳与当前任务。
+2. **服务器详情**（`/servers/:agentId`）：硬件信息 + 阵列卡列表；阵列卡项显示
+   厂商/型号、固件、工具、物理盘数、RAID 数与数据采集时间。
+3. **阵列卡详情**（`/servers/:agentId/controllers/:controllerId`）：
+   - **硬盘** Tab：serial、WWN、容量、介质、状态、RAID 成员、启动保护；可多选后
+     “擦除磁盘”或“用选中盘建 RAID”。
+   - **RAID** Tab：VD 列表与成员；可“创建 RAID”“删除 VD”“清除控制器配置”。
+
+数据来源与刷新：
+
+- 只读任务的 `list_pds` / `list_vds` 结果会缓存到 `controller_snapshots`，阵列卡页面
+  直接读取缓存。
+- 首次打开某个阵列卡且缓存缺失时，自动下发一次 `list_pds` + `list_vds`；之后由
+  “刷新数据 / 刷新硬盘 / 刷新 RAID”按钮手动触发。
+- 所有写操作仍通过 `POST /api/cp/tasks` 下发，破坏性对话框默认 `dry_run=true`；
+  提交后留在当前页，任务进度抽屉每 2 秒轮询，任务结束后自动重载当前阵列卡数据。
+  任务失败时保留旧缓存并提示数据时间。
+
+新增只读端点：
+
+```
+GET /api/cp/agents/<agent_id>/controllers
+GET /api/cp/agents/<agent_id>/controllers/<controller_id>
+```
+
+旧 `/agents`、`/agents/:id` 会重定向到 `/servers`、`/servers/:id`。UI 仍无认证。
+
+#### 5.2.2 Agent 客户端接入
+
+Agent 位于 `app/raidforge/agent/`，随 ISO 一起启动；控制面不可达时只影响状态栏
+（连续 6 次心跳失败后显示离线），本地 TUI 与擦除/建卷功能照常可用。
+
+配置优先级（低 → 高）：
+
+```
+内置默认值 < /etc/raidforge/agent.yaml < /run/raidforge/agent.env
+          < 进程环境变量 RF_AGENT_* < 显式覆盖
+```
+
+- 默认：`server_url=http://192.168.40.132:8080`、`api_prefix=/api/raidforge`、
+  `token=raidforge`。构建时可用 `./build.sh --server-url ...` 写入镜像默认值；
+  `agent.yaml` 只包含非秘密键。
+- Token 覆盖顺序：`RF_AGENT_TOKEN` → `/run/raidforge/agent.env` →
+  卷标 `RAIDFORGE-CFG` 的 U 盘 `agent.env` → 内核参数 `rf.token=` → 默认
+  `raidforge`。运行时 token 只驻留内存/tmpfs；出厂默认值内置于代码，不写入
+  `agent.yaml`、状态文件和证据。
+- HTTP/HTTPS 都允许，不做回环或 TLS 强制；`verify_tls` / `ca_bundle` 仅对
+  HTTPS 生效。生产环境建议使用 HTTPS 或至少放在受控内网。
+- 自检（不执行任何写命令）：
+
+```bash
+cd /opt/raidforge && ./venv/bin/python -m raidforge.agent --selftest --dry
+```
+
+- **安全提示**：`raidforge` 是公开的出厂默认令牌，会随 ISO/代码分发；生产部署
+  必须通过 `RF_AGENT_TOKEN` 或服务端 `WEBPLANE_AGENT_TOKEN` 更换为随机值，
+  并避免在不可信网络使用明文 HTTP。
+
 容器：
 
 ```bash
@@ -560,11 +655,36 @@ docker build -t raidforge-webplane webplane
 docker run -d -p 8080:8080 -v rf-data:/data raidforge-webplane
 ```
 
-HTTP 地址解析顺序：显式 `report.http_base_url` 优先；为空时由
-`http://<ssh_host>:<http_port>` 推导。设置页保存时会用当前 IP + HTTP 端口重写
-`http_base_url`（保留原 `https://` 和路径前缀），因此 TUI 里改 IP/端口对 SSH 通道
-和 `/healthz` 探活都生效。永久默认值改 hook 工厂模板，现场值写
-`/etc/raidforge/config.d/90-site.yaml`。
+#### 5.2.3 一键部署到控制面主机
+
+`tools/deploy_webplane.sh` 按顺序完成：本地 `npm ci && npm run build` → `tools/sync.sh`
+同步源码 → 单独上传 `webplane/web/dist` → 远端创建/复用 `webplane/.venv` 并安装
+依赖 → 用 PID 文件重启服务 → 健康检查。
+
+```bash
+# 凭据来自 tools/.remote.env（gitignore）：
+#   REMOTE_HOST=192.168.40.132  REMOTE_USER=root  REMOTE_PASS=...  REMOTE_PORT=22
+./tools/deploy_webplane.sh
+# 或 make webplane-deploy
+```
+
+默认在 `/root/raidforge` 下以 `WEBPLANE_PORT=8080`、
+`WEBPLANE_AGENT_TOKEN=raidforge` 启动；数据在
+`/root/raidforge/webplane-data`，日志 `webplane.log`，PID `webplane.pid`。
+脚本只按 PID 文件重启 webplane，不会触碰远端正在运行的 ISO 构建。
+
+HTTP 证据地址解析顺序（`core/report.py:http_endpoint`）：
+
+1. 显式 `report.http_base_url`（旧版本 TUI 自动写入的 `http://<ssh_host>:<http_port>`
+   会被识别为“旧推导值”并忽略）；
+2. `report.http_host` + `report.http_port`；
+3. `report.transport=http` 且 `http_host` 为空 → `webplane.host/port/scheme`；
+4. 兼容旧行为：`http://<ssh_host>:<http_port>`。
+
+Settings → Connection 现在把 **SSH 证据接收端**、**HTTP 证据接收端**、**webplane
+控制面** 分成三组字段；HTTP 接收端 host 留空即跟随 webplane。保存会同时写
+`config.d/90-site.yaml` 与 `/run/raidforge/agent.env`，并在没有破坏性任务时立即
+切换 Agent 的控制面地址（有任务时延迟到任务结束）。永久默认值仍改 hook 工厂模板。
 
 ### 5.3 传输顺序与补传
 
@@ -580,8 +700,10 @@ HTTP 地址解析顺序：显式 `report.http_base_url` 优先；为空时由
    待传会话。
 7. TUI 的 Dashboard 上按 `U` 可手动重刷一次。
 
-> `webplane/` 控制面不提供 `/sessions`，因此 HTTP 证据上传没有接收端；现场请把
-> `report.transport` 设为 `ssh`（§5.1）。HTTP 仍可用于 `GET /healthz` 探活。
+> webplane 的 `POST /sessions` 会解包 tar.gz 并写入
+> `WEBPLANE_SESSION_DIR/<session_id>/`（同时保留 `<session_id>.tar.gz`、`_receipt.json`
+> 与 append-only `receipts.jsonl`）。重复上传同一 sha256 返回 200 `duplicate`。
+> 该端点无认证，仅限内网/VPN；SSH/rsync 仍是默认首选通道（§5.1）。
 >
 > 退出阶段只重新计算 `manifest.json` 的哈希，不再生成 DOCX、不再上传；报告和上传
 > 只在擦除命令执行完后发生。每轮即时上传共用同一把发布锁。
@@ -594,6 +716,8 @@ HTTP 地址解析顺序：显式 `report.http_base_url` 优先；为空时由
 
 新界面是单壳七模块：顶部 1 行状态栏 + 3 行水平 Tab（激活项 `border: tab`）+ 1 行面包屑 + 动态内容区 + 1 行热键栏。80×25 下内容区 19 行。页面是常驻 Widget，切换后筛选、光标、滚动位置保留；NavBar 可聚焦，←/→ 移光标、Enter 激活，表格支持 J/K、Home/End、PgUp/PgDn、Space、Ctrl+A、Ctrl+I。
 
+右下角有一个常驻的 **messages** 浮层（独立 `messages` 层，不占用 19 行内容区），显示 Agent 日志、本地任务日志和操作提示；心跳/轮询 INFO 自动过滤，WARN/ERROR 与任务消息保留。日志不再写到真实 stderr，所以不会覆盖 NavBar。被 push 的模态屏会暂时盖住该浮层，返回主屏后补显。Evidence 页的报告/上传状态已移到右上，右下空间留给消息浮层；Settings 表单底部留有滚动余量，Save/Probe 不会被浮层遮挡。
+
 | 页面 / 压栈屏 | 内容 | 按键 |
 |---|---|---|
 | **Dashboard** | 2×2 卡片（Server / Controllers / Storage / Health）+ Recent Tasks | `←/→` 切 Tab · `Enter` 进入内容 · `F5` 刷新 · `Ctrl+P` 命令面板 |
@@ -601,7 +725,7 @@ HTTP 地址解析顺序：显式 `report.http_base_url` 优先；为空时由
 | **Physical** | 筛选条 + 80 列满宽多选表 + 选中行底部抽屉；VD 成员/UNKNOWN/blocked 灰显不可选 | `←/→` 切 Tab · `Enter` 进入表格 · `Space` 勾选 · `A` 全选 · `N` 清空 · `/` 搜索 · `F8` 擦除（红） |
 | **Virtual** | 同构满宽布局；`Enter` 压入成员盘 | `←/→` 切 Tab · `Enter` 成员 · `F7` 建卷（红）· `F9` 删卷（红） |
 | **Tasks** | 串行任务队列 + RichLog 实时日志 | `←/→` 切 Tab · `C` 取消 · `F5` 刷新 |
-| **Evidence** | 会话列表 + 文件树 + 报告/上传状态 | `←/→` 切 Tab · `R` 重扫 · `F5` 刷新 |
+| **Evidence** | 会话列表 + 右上报告/上传状态 + 文件树 | `←/→` 切 Tab · `R` 重扫 · `F5` 刷新 |
 | **Settings** | 左分类 + 右表单（连接/上报/证据/外观/关于） | `←/→` 切 Tab · `Enter` 保存 · `Tab` 字段 |
 | **ControllerDetail**（压栈） | 控制器 KV、VD 表、物理盘表 | `F7` 建卷 · `F9` 删卷 · `F10` 清配置（红）· `F5` · `Esc` |
 | **RAID 向导**（压栈） | ①级别 ②选盘 ③预览（span/容量/warnings/命令序列）④ConfirmModal | `0/1/5/T` 级别 · `Space` 选盘 · `Enter` 下一步 · `Esc` 返回 |
@@ -918,7 +1042,7 @@ NVMe 时用 `sanitize`，其余一律 `blockerase` —— 不猜。
 
 ```bash
 pytest tests -q                      # 跨平台全量；装齐依赖并使用 7.5.0 时全绿
-pytest webplane/tests -q             # 控制面：agent 协议 / 管理 API / 并发领取
+pytest webplane/tests -q             # 控制面：agent 协议 / 管理 API / 并发领取 / 阵列卡快照
 ./tools/check.sh                     # L0：bash -n + pytest + 探测链 mock + 80×25 UI 冒烟（~30s）
 tests/test_detection.sh --mock       # Linux/WSL/macOS：用伪造 CLI 跑真实进程链
 tests/test_detection.sh --real       # 在真机上打印它构造出的命令（不执行任何东西）
@@ -1004,20 +1128,24 @@ Windows 的 Git Bash 会把 `/root/...` 改写成盘符路径，调用前加 `MS
   `manifest.json`；现有 DOCX 报告仍只记录擦除轮次，未包含 RAID 章节。
 * `ssacli` / `arcconf` 的部分高级擦除模式和全部 RAID 命令依赖固件支持，见 §7 的
   VERIFY 提示。
-* `webplane/` 控制面 UI 与 `/api/cp` 无鉴权，仅供内网/VPN 使用；agent 面可用
-  `WEBPLANE_AGENT_TOKEN` 做共享令牌校验。
+* `webplane/` 控制面 UI 与 `/api/cp` 无鉴权，仅供内网/VPN 使用；agent 面使用
+  `WEBPLANE_AGENT_TOKEN` 做共享令牌校验，默认值与 Agent 一致（`raidforge`）。
+  Agent 默认允许 HTTP/HTTPS，HTTP 为明文传输；生产必须更换默认 token，并优先
+  使用 HTTPS 或受控内网。
 * 证据上传私钥随 ISO 分发且无口令；持有 ISO 等同于持有该接收账号的凭证。接收端应
   用 `authorized_keys` 的 `from=`/`restrict`/forced command 把权限限制到
   `/srv/evidence/incoming`。
 * 所有厂商 CLI 都没放进镜像时，只能擦到 OS 可见的直连盘（generic 模式），
   且 RAID 管理全部禁用。
-* TUI 设置页保存的传输方式、接收端 IP/端口、`http_base_url` 写在 Live 的 tmpfs 里，
-  **重启即失效**；永久值要改 `010-install-app.hook.chroot` 的工厂模板后重建镜像。
+* TUI 设置页保存的传输方式、SSH/HTTP 证据接收端、webplane 地址/端口写在 Live 的
+  tmpfs（`90-site.yaml` 与 `/run/raidforge/agent.env`）里，**重启即失效**；永久值要改
+  `010-install-app.hook.chroot` 的工厂模板后重建镜像。
 * 设置页的 SSH 探测只验证「密钥能登录 + 远端根目录可写」，**不验证接收端是否装了
   `rsync`**，也不做 rsync dry-run（那会在每次保存时传数据）；远端缺 rsync 时探测仍
   会显示 reachable，但正式上传会失败并进入待传队列。HTTP 探测只发 `GET /healthz`；
-  当前 `webplane/` 不接收 `/sessions`，HTTP 证据通道应视为不可用。
-* 设置页保存时会按当前 IP + HTTP 端口重写 `http_base_url`（保留 scheme 和路径）；
-  若配置里显式写了不同主机，保存前会在提示行说明。
+  webplane 的 `POST /sessions` 负责真正接收 HTTP 证据，端点无认证，必须限制在内网/VPN。
+* 设置页保存时会清空旧的自动推导 `http_base_url`；HTTP 证据优先使用 `http_host`，
+  留空且 `transport=http` 时使用 webplane 地址。显式手工写入的不同 `http_base_url`
+  仍保留最高优先级。
 * `10-raidforge-dhcp.network` 会匹配所有 ether 类型网卡（含残留网桥/虚拟网卡）；
   若现场存在无法路由的桥接口，可把 `Name=!lo` 收紧为 `Name=en* eth*`。

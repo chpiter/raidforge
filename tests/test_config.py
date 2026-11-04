@@ -119,6 +119,43 @@ def test_port_normalisation(port, expected):
     assert config_mod._coerce_port(port, 22, "ssh_port") == expected
 
 
+def test_webplane_defaults_and_env_overrides(monkeypatch, tmp_path):
+    _isolate(monkeypatch, tmp_path)
+    cfg = config_mod.load_config(config_dir=str(tmp_path / "config.d"))
+    assert cfg.report.http_host == ""
+    assert cfg.webplane.host == ""
+    assert cfg.webplane.port == 8080
+    assert cfg.webplane.scheme == "http"
+    assert cfg.webplane.api_prefix == "/api/raidforge"
+
+    monkeypatch.setenv("RAIDFORGE_WEBPLANE_HOST", "10.1.2.3")
+    monkeypatch.setenv("RAIDFORGE_WEBPLANE_PORT", "9099")
+    monkeypatch.setenv("RAIDFORGE_WEBPLANE_SCHEME", "https")
+    monkeypatch.setenv("RAIDFORGE_REPORT_HTTP_HOST", "evidence.local")
+    cfg = config_mod.load_config(config_dir=str(tmp_path / "config.d"))
+    assert cfg.webplane.host == "10.1.2.3"
+    assert cfg.webplane.port == 9099
+    assert cfg.webplane.scheme == "https"
+    assert cfg.report.http_host == "evidence.local"
+
+
+def test_site_override_keeps_webplane_and_http_host(monkeypatch, tmp_path):
+    config_dir = _isolate(monkeypatch, tmp_path)
+    config_dir.mkdir()
+    config_mod.write_site_override(
+        {
+            "report": {"http_host": "evidence.local", "http_port": 9000},
+            "webplane": {"host": "10.0.0.20", "port": 8081, "scheme": "https"},
+        }
+    )
+    cfg = config_mod.load_config(config_dir=str(config_dir))
+    assert cfg.report.http_host == "evidence.local"
+    assert cfg.report.http_port == 9000
+    assert cfg.webplane.host == "10.0.0.20"
+    assert cfg.webplane.port == 8081
+    assert cfg.webplane.scheme == "https"
+
+
 def test_report_env_overrides_transport_and_ports(monkeypatch, tmp_path):
     config_dir = _isolate(monkeypatch, tmp_path)
     config_dir.mkdir()

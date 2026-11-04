@@ -24,8 +24,8 @@ class EvidencePage(StatefulPage):
     def compose(self) -> ComposeResult:
         yield EvidenceSessionTable(id="evidence-sessions")
         with Vertical(id="evidence-detail"):
-            yield EvidenceTree(id="evidence-tree")
             yield ReportStatusPanel(id="report-status", classes="status-line")
+            yield EvidenceTree(id="evidence-tree")
 
     def on_mount(self) -> None:
         super().on_mount()

@@ -35,6 +35,7 @@ class HeartbeatLoop:
         self.cfg = cfg
         self.clock = clock or SystemClock()
         self._stop = threading.Event()
+        self._wake = threading.Event()
         self._thread: Optional[threading.Thread] = None
         self._failures = 0
 
@@ -46,8 +47,14 @@ class HeartbeatLoop:
 
     def stop(self, timeout: float = 2.0) -> None:
         self._stop.set()
+        self._wake.set()
         if self._thread is not None:
             self._thread.join(timeout=timeout)
+
+    def wake(self) -> None:
+        """Interrupt the current wait so a new endpoint is tried immediately."""
+
+        self._wake.set()
 
     # -- loop ---------------------------------------------------------------
     def _loop(self) -> None:
@@ -58,7 +65,9 @@ class HeartbeatLoop:
                 log.exception("心跳循环异常: %s", exc)
                 self._on_failure()
             interval = self.runtime.heartbeat_interval()
-            if self._stop.wait(max(1.0, float(interval))):
+            self._wake.wait(max(1.0, float(interval)))
+            self._wake.clear()
+            if self._stop.is_set():
                 break
 
     def beat_once(self) -> bool:

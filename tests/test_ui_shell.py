@@ -27,7 +27,9 @@ from raidforge.core.serverid import resolve_server_id  # noqa: E402
 from raidforge.ui import services as services_mod  # noqa: E402
 from raidforge.ui.app import create_app  # noqa: E402
 from raidforge.ui.models import PageId, TaskItem, TaskKind, TaskStatus  # noqa: E402
+from raidforge.ui.pages.evidence import EvidencePage  # noqa: E402
 from raidforge.ui.pages.physical import PhysicalPage  # noqa: E402
+from raidforge.ui.pages.settings import SettingsPage  # noqa: E402
 from raidforge.ui.screens.command_palette import Command, CommandPaletteModal  # noqa: E402
 from raidforge.ui.screens.confirm import ConfirmModal  # noqa: E402
 from raidforge.ui.screens.main import MainScreen  # noqa: E402
@@ -37,10 +39,12 @@ from raidforge.ui.widgets.breadcrumb import Breadcrumb  # noqa: E402
 from raidforge.ui.widgets.detail_drawer import DetailDrawer  # noqa: E402
 from raidforge.ui.widgets.disk_table import MultiSelectTable  # noqa: E402
 from raidforge.ui.widgets.hotkey_bar import HotkeyBar  # noqa: E402
+from raidforge.ui.widgets.message_panel import MessagePanel  # noqa: E402
 from raidforge.ui.widgets.nav_bar import NavBar, NavItem  # noqa: E402
 from raidforge.ui.widgets.status_bar import StatusBar  # noqa: E402
+from textual.containers import VerticalScroll  # noqa: E402
 from textual.coordinate import Coordinate  # noqa: E402
-from textual.widgets import ContentSwitcher, DataTable, Input, Select  # noqa: E402
+from textual.widgets import ContentSwitcher, DataTable, Input, Select, Static  # noqa: E402
 
 
 def _state(tmp_path) -> AppState:
@@ -309,6 +313,87 @@ def test_top_nav_layout_and_state_retention(monkeypatch, tmp_path):
             assert isinstance(app.screen, CommandPaletteModal)
             await pilot.press("escape")
             await pilot.pause(0.2)
+
+    asyncio.run(scenario())
+
+
+def test_message_panel_is_bottom_right_and_keeps_pages_height(monkeypatch, tmp_path):
+    state = _state(tmp_path)
+    _install_fake_scan(monkeypatch, state)
+
+    async def scenario() -> None:
+        app = create_app(state)
+        async with app.run_test(size=(80, 25)) as pilot:
+            await pilot.pause(0.6)
+            screen = app.screen
+            panel = screen.query_one(MessagePanel)
+            nav = screen.query_one(NavBar)
+            hot = screen.query_one(HotkeyBar)
+            pages = screen.query_one(ContentSwitcher)
+            assert pages.size.height == 19
+            assert panel.region.x >= 30
+            assert panel.region.right <= 80
+            assert panel.region.y >= nav.region.bottom
+            assert panel.region.bottom <= hot.region.y
+            assert not panel.region.overlaps(nav.region)
+
+            screen.toast("hello panel", "warn")
+            await pilot.pause(0.15)
+            assert state.last_message == "hello panel"
+            assert "hello panel" in panel.content.plain
+
+    asyncio.run(scenario())
+
+
+def test_evidence_report_status_sits_above_the_tree_and_panel(monkeypatch, tmp_path):
+    state = _state(tmp_path)
+    _install_fake_scan(monkeypatch, state)
+
+    async def scenario() -> None:
+        app = create_app(state)
+        async with app.run_test(size=(80, 25)) as pilot:
+            await pilot.pause(0.6)
+            await _nav_to(pilot, app, PageId.EVIDENCE)
+            screen = app.screen
+            page = screen.query_one(EvidencePage)
+            report = page.query_one("#report-status")
+            tree = page.query_one("#evidence-tree")
+            panel = screen.query_one(MessagePanel)
+            assert report.region.y < tree.region.y
+            assert report.region.right >= 78
+            assert not report.region.overlaps(panel.region)
+
+    asyncio.run(scenario())
+
+
+def test_settings_splits_evidence_and_webplane_addresses(monkeypatch, tmp_path):
+    state = _state(tmp_path)
+    _install_fake_scan(monkeypatch, state)
+    state.cfg.report.transport = "http"
+    state.cfg.report.ssh_host = "192.168.40.129"
+    state.cfg.webplane.host = "192.168.40.132"
+    state.cfg.webplane.port = 8080
+
+    async def scenario() -> None:
+        app = create_app(state)
+        async with app.run_test(size=(80, 25)) as pilot:
+            await pilot.pause(0.6)
+            await _nav_to(pilot, app, PageId.SETTINGS)
+            await pilot.pause(0.3)
+            screen = app.screen
+            page = screen.query_one(SettingsPage)
+            assert page.query_one("#settings-ssh-host", Input).value == "192.168.40.129"
+            assert page.query_one("#settings-http-host", Input).value == ""
+            assert page.query_one("#settings-webplane-host", Input).value == "192.168.40.132"
+            preview = str(page.query_one("#settings-endpoint", Static).content)
+            assert "192.168.40.132:8080/sessions" in preview
+
+            form = page.query_one("#settings-form", VerticalScroll)
+            form.scroll_end(animate=False)
+            await pilot.pause(0.2)
+            save = page.query_one("#settings-save")
+            panel = screen.query_one(MessagePanel)
+            assert not save.region.overlaps(panel.region)
 
     asyncio.run(scenario())
 

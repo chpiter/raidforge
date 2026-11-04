@@ -82,7 +82,7 @@ def build_remote_job(runtime: Any, task: RemoteTask) -> Any:
 def execute(ctx: Any, runtime: Any, task: RemoteTask) -> Optional[AgentResult]:
     result = AgentResult(
         task_id=task.task_id,
-        agent_id=runtime.agent_id,
+        agent_id=runtime.agent_cfg.agent_id,
         lease_id=task.lease_id,
         started_at=rfc3339(runtime.clock.utcnow()),
     )

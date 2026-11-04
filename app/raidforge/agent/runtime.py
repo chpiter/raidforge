@@ -15,7 +15,7 @@ from typing import Any, Callable, Dict, Optional
 from . import adapters
 from .clock import Clock, SystemClock, parse_rfc3339, rfc3339
 from .client import AgentClient
-from .config import AgentConfig
+from .config import AgentConfig, normalize_server_url
 from .evidence import TaskEvidence, gc_evidence
 from .evidence_uploader import EvidenceUploader
 from .executor import build_remote_job
@@ -135,6 +135,7 @@ class AgentRuntime:
         self._items: Dict[str, Any] = {}
         self._known: Dict[str, RemoteTask] = {}
         self._last_gc = 0.0
+        self._pending_webplane: Optional[tuple[str, str]] = None
 
     # -- identity -----------------------------------------------------------
     def _resolve_server_sn(self) -> str:
@@ -160,8 +161,21 @@ class AgentRuntime:
         logger = logging.getLogger("raidforge.agent")
         logger.setLevel(logging.INFO)
         for handler in list(logger.handlers):
-            if getattr(handler, "_raidforge_agent", False):
+            if getattr(handler, "_raidforge_agent", False) or getattr(handler, "_raidforge_ui", False):
                 logger.removeHandler(handler)
+        try:
+            from ..ui import logbus
+        except Exception:  # pragma: no cover - UI unavailable in headless modes
+            logbus = None  # type: ignore[assignment]
+        if logbus is not None:
+            logbus.add_secret(self.agent_cfg.token)
+            ui_handler = logbus.active()
+            if ui_handler is not None:
+                ui_handler._raidforge_ui = True  # type: ignore[attr-defined]
+                logger.propagate = False
+                logger.addHandler(ui_handler)
+            else:
+                logger.propagate = True
         try:
             log_dir = Path(self.agent_cfg.log_dir)
             log_dir.mkdir(parents=True, exist_ok=True)
@@ -519,16 +533,23 @@ class AgentRuntime:
             if self._active_task is not None and self._active_task.task_id == task.task_id:
                 self._active_task = None
                 self._active_started = ""
+        pending = self._pending_webplane
+        self._pending_webplane = None
         self._known.pop(task.task_id, None)
         self._items.pop(task.task_id, None)
         self.emit_status()
+        if pending is not None:
+            try:
+                self.apply_webplane(*pending)
+            except ValueError as exc:
+                self.set_last_error("invalid_params", str(exc))
 
     def active_task(self) -> Optional[RemoteTask]:
         with self._active_lock:
             return self._active_task
 
     def finish_remote(self, task: RemoteTask, result: AgentResult) -> None:
-        self.store.clear_current_task()
+        self.store.set_current_task(None)
         self.admission.mark_finished(task.task_id)
         self.store.remember_task(
             {
@@ -732,6 +753,62 @@ class AgentRuntime:
                 candidate = "root"
         return _SANITIZE_RE.sub("", candidate)[:64] or "root"
 
+    # -- control plane ------------------------------------------------------
+    def apply_webplane(self, server_url: str, api_prefix: Optional[str] = None) -> str:
+        """Point the next heartbeat/poll at a new control plane immediately."""
+
+        normalized = normalize_server_url(server_url)
+        if not normalized:
+            raise ValueError(f"invalid webplane URL: {server_url!r}")
+        prefix = str(api_prefix or self.agent_cfg.api_prefix or "/api/raidforge").strip()
+        if not prefix.startswith("/"):
+            prefix = "/" + prefix
+        prefix = "/" + prefix.strip("/")
+        changed = (
+            normalized != self.agent_cfg.server_url
+            or prefix != self.agent_cfg.api_prefix
+        )
+        self.agent_cfg.server_url = normalized
+        self.agent_cfg.api_prefix = prefix
+        self._pending_webplane = None
+        if not changed:
+            return normalized
+        self.connection = ConnectionState.CONNECTING
+        self.note = "控制面地址已更新"
+        self.last_error = {"code": "", "at": "", "message": ""}
+        self.emit_status()
+        try:
+            self.state.evidence.emit(
+                "agent_webplane_changed", server_url=normalized, api_prefix=prefix
+            )
+        except Exception:
+            pass
+        if self._heartbeat is not None:
+            self._heartbeat.wake()
+        if self._poller is not None:
+            self._poller.wake()
+        if not self.stopping.is_set() and self._supervisor is None:
+            self._started = False
+            self.start()
+        return normalized
+
+    def request_webplane(self, server_url: str, api_prefix: Optional[str] = None) -> bool:
+        """Apply now, or defer until the active remote task finishes."""
+
+        normalized = normalize_server_url(server_url)
+        if not normalized:
+            raise ValueError(f"invalid webplane URL: {server_url!r}")
+        if self.active_task() is not None:
+            self._pending_webplane = (
+                normalized,
+                str(api_prefix or self.agent_cfg.api_prefix or "/api/raidforge"),
+            )
+            self.note = "控制面变更等待任务结束"
+            self.emit_status()
+            return False
+        self.apply_webplane(normalized, api_prefix)
+        return True
+
     # -- pause / status -----------------------------------------------------
     def pause(self, reason: str) -> None:
         if self.paused:
@@ -816,6 +893,9 @@ def build_agent(
     ui_post: Optional[Callable[[Any], None]] = None,
     confirm_sink: Optional[Callable[[ConfirmRequest], ConfirmDecision]] = None,
 ) -> Optional[AgentRuntime]:
+    # 单元测试默认不自动联网；需要真实 Agent 的测试显式设置 RF_AGENT_FORCE_START=1。
+    if os.environ.get("PYTEST_CURRENT_TEST") and os.environ.get("RF_AGENT_FORCE_START") != "1":
+        return None
     try:
         return AgentRuntime(state, ui_post=ui_post, confirm_sink=confirm_sink)
     except Exception as exc:  # pragma: no cover - Agent 故障不得阻止 TUI

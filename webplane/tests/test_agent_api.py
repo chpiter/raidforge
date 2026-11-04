@@ -271,7 +271,9 @@ def test_evidence_upload_duplicate_and_conflict(
 
 
 def test_evidence_size_limit(tmp_path, make_headers):
-    settings = Settings(data_dir=tmp_path, maintenance=False, max_evidence_bytes=4)
+    settings = Settings(
+        data_dir=tmp_path, maintenance=False, max_evidence_bytes=4, agent_token=""
+    )
     app = create_app(settings)
     client = app.test_client()
     headers = make_headers("agent-1")

@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import ipaddress
 import os
-from typing import List
+import re
+from typing import Any, Dict, List, Optional
+from urllib.parse import urlsplit
 
 from textual.app import ComposeResult
 from textual.containers import Horizontal, VerticalScroll
@@ -24,6 +26,24 @@ CATEGORIES = [
     ("About", "about"),
 ]
 
+_HOST_RE = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9._-]{0,252})$")
+
+
+def _port_or(value: str, default: int) -> int:
+    try:
+        port = int(str(value).strip())
+    except (TypeError, ValueError):
+        return default
+    return port if 1 <= port <= 65535 else default
+_CONNECTION_INPUTS = {
+    "settings-ssh-host",
+    "settings-ssh-port",
+    "settings-http-host",
+    "settings-http-port",
+    "settings-webplane-host",
+    "settings-webplane-port",
+}
+
 
 class SettingsPage(StatefulPage):
     PAGE = PageId.SETTINGS
@@ -32,9 +52,9 @@ class SettingsPage(StatefulPage):
     def __init__(self, state) -> None:
         super().__init__(state)
         self._transport = config_mod.normalize_transport(state.cfg.report.transport)
-        self._ports = {"ssh": state.cfg.report.ssh_port, "http": state.cfg.report.http_port}
         self._checking = False
         self._error = Static("", classes="danger")
+        self._endpoint = Static("", id="settings-endpoint", classes="muted")
 
     def compose(self) -> ComposeResult:
         yield OptionList(
@@ -96,22 +116,51 @@ class SettingsPage(StatefulPage):
         cfg = self.state.cfg
         report = cfg.report
         self._transport = config_mod.normalize_transport(report.transport)
-        port = self._ports.get(self._transport, report.ssh_port)
         transport = Select(
             [("SSH", "ssh"), ("HTTP", "http")],
             value=self._transport,
             allow_blank=False,
             id="settings-transport",
         )
-        host = Input(value=report.ssh_host, placeholder="192.168.40.129", id="settings-host")
-        port_input = Input(value=str(port), placeholder="22", id="settings-port")
-        endpoint = Static("", id="settings-endpoint", classes="muted")
+        ssh_host = Input(
+            value=report.ssh_host, placeholder="192.168.40.129", id="settings-ssh-host"
+        )
+        ssh_port = Input(
+            value=str(report.ssh_port), placeholder="22", id="settings-ssh-port", classes="port"
+        )
+        http_host = Input(
+            value=report.http_host, placeholder="empty = webplane", id="settings-http-host"
+        )
+        http_port = Input(
+            value=str(report.http_port), placeholder="8080", id="settings-http-port", classes="port"
+        )
+        web_host, web_port, web_scheme, source = self._webplane_defaults()
+        webplane_host = Input(
+            value=web_host, placeholder="192.168.40.132", id="settings-webplane-host"
+        )
+        webplane_port = Input(
+            value=str(web_port),
+            placeholder="8080",
+            id="settings-webplane-port",
+            classes="port",
+        )
+        scheme = Select(
+            [("HTTP", "http"), ("HTTPS", "https")],
+            value=web_scheme,
+            allow_blank=False,
+            id="settings-webplane-scheme",
+            classes="scheme",
+        )
         fixed = Static(
             f"User: {report.ssh_user}   Remote root: {report.ssh_remote_root}",
             classes="muted",
         )
+        source_line = Static(
+            f"api prefix: {cfg.webplane.api_prefix}   source: {source}", classes="muted"
+        )
         note = Static(
-            "Saved to config.d/90-site.yaml until reboot; empty = queue locally.",
+            "Saved to config.d/90-site.yaml and /run/raidforge/agent.env for this boot; "
+            "HTTP host empty = follow webplane.",
             classes="muted",
         )
         actions = Horizontal(
@@ -121,29 +170,37 @@ class SettingsPage(StatefulPage):
             classes="form-actions",
         )
         await form.mount(
-            Label("[b]Connection[/b] — preferred upload channel", classes="title"),
+            Label("[b]Connection[/b] — evidence upload & control plane", classes="title"),
             fixed,
-            Label("[b]Transport[/b] (the other channel remains the fallback)"),
+            Label("[b]Preferred evidence transport[/b] (the other channel remains fallback)"),
             transport,
-            Label("[b]Receiver IPv4 / port[/b]"),
-            host,
-            port_input,
-            endpoint,
+            Label("[b]SSH evidence receiver[/b] (IPv4 / port)"),
+            Horizontal(ssh_host, ssh_port, classes="settings-row"),
+            Label("[b]HTTP evidence receiver[/b] (host / port; empty host = webplane)"),
+            Horizontal(http_host, http_port, classes="settings-row"),
+            Label("[b]Webplane control plane[/b] (host / port / scheme)"),
+            Horizontal(webplane_host, webplane_port, scheme, classes="settings-row"),
+            source_line,
+            self._endpoint,
             self._error,
             note,
             actions,
         )
         transport.value = self._transport
-        self._update_endpoint(host, port_input, endpoint, transport)
+        self._update_endpoint_preview()
 
     async def _show_reporting(self, form: VerticalScroll) -> None:
-        report = self.state.cfg.report
+        cfg = self.state.cfg
+        report = cfg.report
+        endpoint = report_mod.http_endpoint(cfg) or "-"
+        webplane = report_mod.webplane_url(cfg) or "-"
         await form.mount(
             Label("[b]Reporting[/b]", classes="title"),
             Static(f"enabled            : {report.enabled}"),
             Static(f"preferred transport: {report.transport}"),
             Static(f"ssh endpoint       : {report.ssh_host or '-'}:{report.ssh_port}"),
-            Static(f"http endpoint      : {report.http_base_url or '-'}"),
+            Static(f"http endpoint      : {endpoint}"),
+            Static(f"webplane           : {webplane}{cfg.webplane.api_prefix}"),
             Static(f"run upload budget  : {report.run_upload_seconds:.0f}s"),
             Static(f"pending queue      : {report.pending_root}"),
             Static("These values are read-only here; edit config.yaml for factory defaults.", classes="muted"),
@@ -199,30 +256,134 @@ class SettingsPage(StatefulPage):
         )
 
     # -- connection helpers -------------------------------------------------
-    def _base_url(self, host: str, port: int) -> str:
-        return report_mod.http_url_for(host, port, "http", "")
+    def _webplane_defaults(self) -> tuple[str, int, str, str]:
+        cfg = self.state.cfg
+        web = cfg.webplane
+        resolved = report_mod.webplane_url(cfg)
+        parsed = urlsplit(resolved) if resolved else None
+        if web.host:
+            return web.host, web.port, web.scheme, "90-site.yaml"
+        host = (parsed.hostname if parsed else "") or ""
+        port = (parsed.port if parsed and parsed.port else web.port) or 8080
+        scheme = (
+            parsed.scheme
+            if parsed and parsed.scheme in {"http", "https"}
+            else web.scheme
+        ) or "http"
+        return host, port, scheme, "agent.yaml / default"
 
-    def _update_endpoint(self, host: Input, port: Input, endpoint: Static, transport: Select) -> None:
-        value = host.value.strip()
-        if not value:
-            endpoint.update("HTTP endpoint: disabled (no receiver IP)")
+    def _raw_values(self) -> Optional[Dict[str, Any]]:
+        try:
+            return {
+                "transport": str(self.query_one("#settings-transport", Select).value),
+                "ssh_host": self.query_one("#settings-ssh-host", Input).value.strip(),
+                "ssh_port": self.query_one("#settings-ssh-port", Input).value.strip(),
+                "http_host": self.query_one("#settings-http-host", Input).value.strip(),
+                "http_port": self.query_one("#settings-http-port", Input).value.strip(),
+                "webplane_host": self.query_one("#settings-webplane-host", Input).value.strip(),
+                "webplane_port": self.query_one("#settings-webplane-port", Input).value.strip(),
+                "webplane_scheme": str(
+                    self.query_one("#settings-webplane-scheme", Select).value
+                ),
+            }
+        except Exception:  # pragma: no cover - form not mounted
+            return None
+
+    def _read_form(self) -> Optional[Dict[str, Any]]:
+        raw = self._raw_values()
+        if raw is None:
+            return None
+        ssh_host = raw["ssh_host"]
+        if ssh_host:
+            try:
+                ipaddress.IPv4Address(ssh_host)
+            except ValueError:
+                self._error.update("SSH receiver must be a valid IPv4 address")
+                self.state.evidence.emit(
+                    "settings_rejected", ssh_host=ssh_host, reason="bad_ipv4"
+                )
+                return None
+        for label, value in (("HTTP", raw["http_host"]), ("webplane", raw["webplane_host"])):
+            if value and not _HOST_RE.match(value):
+                self._error.update(f"{label} host is not a valid hostname or IPv4 address")
+                self.state.evidence.emit(
+                    "settings_rejected", reason="bad_host", host=value
+                )
+                return None
+        ports: Dict[str, int] = {}
+        for label, key, default in (
+            ("SSH port", "ssh_port", 22),
+            ("HTTP port", "http_port", 8080),
+            ("webplane port", "webplane_port", 8080),
+        ):
+            text = raw[key]
+            try:
+                value = int(text) if text else default
+            except ValueError:
+                value = 0
+            if not 1 <= value <= 65535:
+                self._error.update(f"{label} must be between 1 and 65535")
+                self.state.evidence.emit("settings_rejected", reason="bad_port")
+                return None
+            ports[key] = value
+        return {
+            "transport": config_mod.normalize_transport(raw["transport"]),
+            "ssh_host": ssh_host,
+            "ssh_port": ports["ssh_port"],
+            "http_host": raw["http_host"],
+            "http_port": ports["http_port"],
+            "webplane_host": raw["webplane_host"],
+            "webplane_port": ports["webplane_port"],
+            "webplane_scheme": raw["webplane_scheme"],
+        }
+
+    def _preview_endpoint(self, values: Dict[str, Any]) -> str:
+        report = config_mod.ReportConfig(
+            transport=values["transport"],
+            ssh_host=values["ssh_host"],
+            ssh_port=values["ssh_port"],
+            http_host=values["http_host"],
+            http_port=values["http_port"],
+            http_base_url=self.state.cfg.report.http_base_url,
+        )
+        if values["webplane_host"]:
+            webplane = report_mod.http_url_for(
+                values["webplane_host"],
+                values["webplane_port"],
+                values["webplane_scheme"],
+            )
+        else:
+            webplane = report_mod.webplane_url(self.state.cfg)
+        return report_mod.http_endpoint_for(report, webplane)
+
+    def _update_endpoint_preview(self) -> None:
+        raw = self._raw_values()
+        if raw is None:
             return
-        mode = str(transport.value)
-        port_value = self._ports["http"]
-        if mode == "http":
-            text = port.value.strip()
-            if text.isdigit() and 1 <= int(text) <= 65535:
-                port_value = int(text)
-        endpoint.update(f"HTTP endpoint: {self._base_url(value, port_value)}")
+        values = {
+            "transport": config_mod.normalize_transport(raw["transport"]),
+            "ssh_host": raw["ssh_host"],
+            "ssh_port": _port_or(raw["ssh_port"], 22),
+            "http_host": raw["http_host"],
+            "http_port": _port_or(raw["http_port"], 8080),
+            "webplane_host": raw["webplane_host"],
+            "webplane_port": _port_or(raw["webplane_port"], 8080),
+            "webplane_scheme": raw["webplane_scheme"],
+        }
+        endpoint = self._preview_endpoint(values)
+        if endpoint:
+            self._endpoint.update(f"HTTP endpoint: {endpoint}/sessions")
+        else:
+            self._endpoint.update(
+                "HTTP endpoint: disabled (set an HTTP host or use HTTP transport)"
+            )
 
     def on_select_changed(self, event: Select.Changed) -> None:
         if event.select.id == "settings-transport":
             self._transport = str(event.value)
-            try:
-                port = self.query_one("#settings-port", Input)
-                port.value = str(self._ports.get(self._transport, 22))
-            except Exception:  # pragma: no cover
-                pass
+            self._update_endpoint_preview()
+        elif event.select.id == "settings-webplane-scheme":
+            self._update_endpoint_preview()
         elif event.select.id == "settings-theme":
             choice = str(event.value)
             self.state.cfg.ui.theme = choice
@@ -239,8 +400,12 @@ class SettingsPage(StatefulPage):
                 pass
             self.toast(f"theme: {selected}")
 
+    def on_input_changed(self, event: Input.Changed) -> None:
+        if event.input.id in _CONNECTION_INPUTS:
+            self._update_endpoint_preview()
+
     def on_input_submitted(self, event: Input.Submitted) -> None:
-        if event.input.id in ("settings-host", "settings-port"):
+        if event.input.id in _CONNECTION_INPUTS:
             self._save_connection()
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
@@ -250,78 +415,116 @@ class SettingsPage(StatefulPage):
             self._probe()
 
     def _save_connection(self) -> None:
-        try:
-            host = self.query_one("#settings-host", Input).value.strip()
-            port_input = self.query_one("#settings-port", Input)
-            transport = self.query_one("#settings-transport", Select)
-        except Exception:  # pragma: no cover - form not mounted
+        values = self._read_form()
+        if values is None:
             return
-        if host:
-            try:
-                ipaddress.IPv4Address(host)
-            except ValueError:
-                self._error.update("not a valid IPv4 address")
-                self.state.evidence.emit("settings_rejected", ssh_host=host, reason="bad_ipv4")
-                return
-        text = port_input.value.strip()
-        try:
-            port = int(text)
-        except ValueError:
-            port = 0
-        if not 1 <= port <= 65535:
-            self._error.update("port must be between 1 and 65535")
-            self.state.evidence.emit("settings_rejected", ssh_host=host, reason="bad_port")
+        path = self._apply_form(values, persist=True, reconnect=True)
+        if path is None:
             return
-        mode = str(transport.value)
-        self._ports[mode] = port
-        http_base = "" if not host else self._base_url(host, self._ports["http"])
+        self._error.update("")
+        self.toast(f"saved to {path}; probing {values['transport'].upper()}")
+        self._probe_values(values)
+
+    def _apply_form(
+        self, values: Dict[str, Any], *, persist: bool, reconnect: bool
+    ) -> Optional[Any]:
+        from ...agent.config import write_run_env
+
+        cfg = self.state.cfg
         updates = {
             "report": {
-                "transport": mode,
-                "ssh_host": host,
-                "ssh_port": self._ports["ssh"],
-                "http_port": self._ports["http"],
-                "http_base_url": http_base,
-            }
+                "transport": values["transport"],
+                "ssh_host": values["ssh_host"],
+                "ssh_port": values["ssh_port"],
+                "http_host": values["http_host"],
+                "http_port": values["http_port"],
+                "http_base_url": "",
+            },
+            "webplane": {
+                "host": values["webplane_host"],
+                "port": values["webplane_port"],
+                "scheme": values["webplane_scheme"],
+            },
         }
-        try:
-            path = config_mod.write_site_override(updates)
-        except (OSError, RuntimeError) as exc:
-            self._error.update(f"cannot write {config_mod.SITE_OVERRIDE_PATH}: {exc}")
-            return
-        report = self.state.cfg.report
-        report.transport = mode
-        report.ssh_host = host
-        report.ssh_port = self._ports["ssh"]
-        report.http_port = self._ports["http"]
-        report.http_base_url = http_base
-        self._error.update("")
+        path = None
+        if persist:
+            try:
+                path = config_mod.write_site_override(updates)
+            except (OSError, RuntimeError) as exc:
+                self._error.update(f"cannot write {config_mod.SITE_OVERRIDE_PATH}: {exc}")
+                return None
+        report = cfg.report
+        report.transport = values["transport"]
+        report.ssh_host = values["ssh_host"]
+        report.ssh_port = values["ssh_port"]
+        report.http_host = values["http_host"]
+        report.http_port = values["http_port"]
+        report.http_base_url = ""
+        web = cfg.webplane
+        web.host = values["webplane_host"]
+        web.port = values["webplane_port"]
+        web.scheme = values["webplane_scheme"]
+        new_webplane = report_mod.webplane_url(cfg)
+        prefix = web.api_prefix
+        if persist:
+            try:
+                if values["webplane_host"]:
+                    write_run_env(
+                        {"SERVER_URL": new_webplane, "API_PREFIX": prefix}
+                    )
+                else:
+                    write_run_env({}, remove=("SERVER_URL", "API_PREFIX"))
+            except OSError as exc:  # pragma: no cover - read-only /run
+                self.toast(f"agent.env not written: {exc}", "warn")
+            if reconnect and new_webplane:
+                runtime = getattr(self.state, "agent_runtime", None)
+                if runtime is not None and hasattr(runtime, "request_webplane"):
+                    try:
+                        applied = runtime.request_webplane(new_webplane, prefix)
+                    except Exception as exc:
+                        self._error.update(f"webplane reconnect failed: {exc}")
+                    else:
+                        if not applied:
+                            self.toast(
+                                "webplane change will apply when the current task finishes",
+                                "warn",
+                            )
         self.state.evidence.emit(
             "settings_changed",
-            ssh_host=host,
-            transport=mode,
-            ssh_port=self._ports["ssh"],
-            http_port=self._ports["http"],
-            http_base_url=http_base,
-            path=str(path),
+            transport=values["transport"],
+            ssh_host=values["ssh_host"],
+            ssh_port=values["ssh_port"],
+            http_host=values["http_host"],
+            http_port=values["http_port"],
+            webplane_host=values["webplane_host"],
+            webplane_port=values["webplane_port"],
+            webplane_scheme=values["webplane_scheme"],
+            http_endpoint=report_mod.http_endpoint(cfg),
+            path=str(path) if path is not None else "",
         )
-        self.toast(f"saved to {path}; probing {mode.upper()}")
-        if host:
-            self._start_probe(mode, host, port)
+        return path
+
+    def _probe_values(self, values: Dict[str, Any]) -> None:
+        if values["transport"] == "http":
+            endpoint = report_mod.http_endpoint(self.state.cfg)
+            if not endpoint:
+                self.toast("no HTTP receiver configured")
+                return
+            self._start_probe("http", endpoint, values["http_port"], endpoint=endpoint)
+            return
+        if not values["ssh_host"]:
+            self.toast("enter an SSH receiver IP first")
+            return
+        self._start_probe("ssh", values["ssh_host"], values["ssh_port"])
 
     def _probe(self) -> None:
-        try:
-            host = self.query_one("#settings-host", Input).value.strip()
-            port_input = self.query_one("#settings-port", Input)
-            mode = str(self.query_one("#settings-transport", Select).value)
-        except Exception:  # pragma: no cover
+        values = self._read_form()
+        if values is None:
             return
-        if not host:
-            self.toast("enter a receiver IP first")
-            return
-        self._start_probe(mode, host, int(port_input.value or 0))
+        self._apply_form(values, persist=False, reconnect=False)
+        self._probe_values(values)
 
-    def _start_probe(self, mode: str, host: str, port: int) -> None:
+    def _start_probe(self, mode: str, host: str, port: int, endpoint: str = "") -> None:
         if self._checking:
             self.toast("a receiver check is already running")
             return
@@ -331,12 +534,13 @@ class SettingsPage(StatefulPage):
             "settings_http_check_started" if mode == "http" else "settings_ssh_check_started",
             ssh_host=host,
             ssh_port=port,
+            endpoint=endpoint,
         )
 
         def worker() -> None:
             try:
                 if mode == "http":
-                    result = report_mod.check_http(cfg, timeout=5.0)
+                    result = report_mod.check_http(cfg, timeout=5.0, endpoint=endpoint)
                 else:
                     result = report_mod.check_ssh(cfg, timeout=5.0)
             except Exception as exc:  # pragma: no cover - probes are defensive
