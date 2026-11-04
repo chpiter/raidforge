@@ -55,6 +55,15 @@ remote-build: sync ## sync, then build the ISO on the build host
 remote-sh:        ## open a shell command on the build host, e.g. make remote-sh CMD=uptime
 	./tools/sync.sh --run "$(CMD)"
 
+iso-adopt:        ## record the current ISO as the incremental baseline
+	./tools/iso_update.sh --adopt
+
+iso-update:       ## classify changes and patch/build the ISO (release xz)
+	./tools/iso_update.sh
+
+iso-update-test:  ## app-only zstd test ISO
+	./tools/iso_update.sh --test
+
 webplane:         ## run the control plane locally (Flask, port 8080)
 	python3 -m webplane
 
@@ -72,4 +81,4 @@ help:
 
 .PHONY: build build-no-vendor vendor preflight clean clean-all plan run test check pytest compile \
         webplane webplane-test webplane-web webplane-deploy help \
-        sync sync-all sync-watch remote-build remote-sh
+        sync sync-all sync-watch remote-build remote-sh iso-adopt iso-update iso-update-test

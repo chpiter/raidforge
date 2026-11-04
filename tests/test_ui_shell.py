@@ -331,8 +331,9 @@ def test_message_panel_is_bottom_right_and_keeps_pages_height(monkeypatch, tmp_p
             hot = screen.query_one(HotkeyBar)
             pages = screen.query_one(ContentSwitcher)
             assert pages.size.height == 19
-            assert panel.region.x >= 30
-            assert panel.region.right <= 80
+            assert panel.region.width >= 48
+            assert panel.region.right == 80
+            assert panel.region.x == 80 - panel.region.width
             assert panel.region.y >= nav.region.bottom
             assert panel.region.bottom <= hot.region.y
             assert not panel.region.overlaps(nav.region)
@@ -387,6 +388,13 @@ def test_settings_splits_evidence_and_webplane_addresses(monkeypatch, tmp_path):
             assert page.query_one("#settings-webplane-host", Input).value == "192.168.40.132"
             preview = str(page.query_one("#settings-endpoint", Static).content)
             assert "192.168.40.132:8080/sessions" in preview
+            assert page.query_one("#settings-http-port", Input).content_size.width >= 6
+            assert page.query_one("#settings-webplane-port", Input).content_size.width >= 6
+            scheme = page.query_one("#settings-webplane-scheme", Select)
+            assert scheme.region.width >= 14
+            scheme.value = "https"
+            await pilot.pause(0.1)
+            assert "HTTPS" in str(scheme.query_one("#label").render())
 
             form = page.query_one("#settings-form", VerticalScroll)
             form.scroll_end(animate=False)

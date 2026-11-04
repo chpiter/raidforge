@@ -3,6 +3,7 @@
     <PageHeader :title="agent?.agent_id || '服务器详情'" :subtitle="agent ? `SN ${agent.server_sn || '-'}` : ''">
       <template #actions>
         <el-button @click="$router.push('/servers')">返回服务器</el-button>
+        <el-button link @click="$router.push('/tasks')">任务</el-button>
         <el-button :loading="loading" @click="run">刷新</el-button>
         <el-button :disabled="!agent" @click="refreshHardware">刷新硬件</el-button>
         <el-button type="primary" :disabled="!agent" @click="newTask">新建任务</el-button>
@@ -129,12 +130,6 @@
       </div>
     </template>
 
-    <TaskDrawer
-      v-model="drawerVisible"
-      :task-ids="drawerTaskIds"
-      :title="drawerTitle"
-      @finished="onDrawerFinished"
-    />
   </div>
 </template>
 
@@ -145,18 +140,16 @@ import { ElMessage } from 'element-plus'
 import PageHeader from '../components/PageHeader.vue'
 import StatusTag from '../components/StatusTag.vue'
 import JsonPreview from '../components/JsonPreview.vue'
-import TaskDrawer from '../components/TaskDrawer.vue'
 import { createTask, getAgent, getAgentControllers, getAgentTasks } from '../api'
 import { formatTime, relativeTime, usePolling } from '../composables/usePolling'
+import { useTaskWatch } from '../composables/useTaskWatch'
 
 const route = useRoute()
 const router = useRouter()
 const agent = ref(null)
 const controllers = ref([])
 const recentTasks = ref([])
-const drawerVisible = ref(false)
-const drawerTaskIds = ref([])
-const drawerTitle = ref('任务进度')
+const { watchTasks } = useTaskWatch()
 
 const { run, loading, error } = usePolling(async () => {
   const id = route.params.agentId
@@ -200,20 +193,16 @@ const refreshHardware = async () => {
       params: { controller_ids: null, include_raw_output: false },
       require_local_confirm: false
     })
-    drawerTaskIds.value = [data.task.task_id]
-    drawerTitle.value = '刷新服务器硬件'
-    drawerVisible.value = true
+    ElMessage.success('已下发刷新硬件任务，后台执行中')
+    watchTasks([data.task.task_id], {
+      title: '刷新服务器硬件',
+      failureHint: '保留当前数据',
+      onFinished: ({ anyFailed }) => {
+        if (!anyFailed) run()
+      }
+    })
   } catch (exc) {
     ElMessage.error(exc.message || '下发刷新任务失败')
-  }
-}
-
-const onDrawerFinished = ({ anyFailed }) => {
-  drawerVisible.value = false
-  if (anyFailed) {
-    ElMessage.warning('刷新任务失败，保留当前数据')
-  } else {
-    run()
   }
 }
 </script>

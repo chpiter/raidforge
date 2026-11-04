@@ -201,6 +201,11 @@ async def main() -> int:
 
         await nav_to(pilot, app, PAGE_ORDER.index(PageId.SETTINGS))
         settings = screen.query_one("#page-settings")
+        await settings._show("connection")
+        await pilot.pause(0.2)
+        for field in ("#settings-http-port", "#settings-webplane-port"):
+            if settings.query_one(field, Input).content_size.width < 6:
+                failures.append(f"{field} is too narrow for a 5-digit port")
         await settings._show("appearance")
         await pilot.pause(0.2)
         theme_select = settings.query_one("#settings-theme", Select)

@@ -27,8 +27,8 @@ MainScreen {
 }
 
 #message-panel {
-    width: 50%;
-    max-width: 60;
+    width: 70%;
+    max-width: 100;
     height: 5;
     background: $surface;
     color: $foreground;
@@ -545,14 +545,25 @@ Tree:focus > .tree--cursor {
 }
 
 #settings-form .settings-row Input.port {
-    width: 9;
+    width: 13;
     margin: 0;
 }
 
 #settings-form .settings-row Select {
-    width: 10;
+    width: 14;
     height: 3;
     margin: 0;
+    border: none;
+}
+
+#settings-form .settings-row Select SelectCurrent {
+    border: tall $border;
+}
+
+#settings-form .settings-row Select:focus SelectCurrent {
+    border: tall $focus;
+    background: $focus;
+    color: $focus-foreground;
 }
 
 #settings-form .form-actions {

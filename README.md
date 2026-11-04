@@ -127,6 +127,8 @@ raidforge/
 │   ├── chroot_tty.py            L1：在构建 chroot 的真实 pty 里跑 TUI（~15s）
 │   ├── qemu_drive.py            L4：无头 qemu 启动 ISO、驱动 TUI、验证退出菜单（--erase-rounds）
 │   ├── sync.sh                  把本地产物同步到构建主机（增量 / 监听 / 远端执行）
+│   ├── iso_update.sh / .py      变更分类；app-only 走增量 ISO 补丁，否则回落 build.sh
+│   ├── iso_patch.sh             远端复用 chroot 重打 squashfs/ISO（由 iso_update 调用）
 │   ├── rssh.py                  免交互 SSH 小工具（exec / put / push，读 .remote.env）
 │   └── .remote.env              构建主机账号（已 gitignore）
 ├── artifacts/                   tools 生成的截图 / 日志（已 gitignore）
@@ -223,6 +225,31 @@ chmod 755 config/includes.chroot/usr/local/bin/arcconf
 保留缓存时 `lb clean` 只做 `--binary --chroot`，`cache/bootstrap/`（整棵树）和
 `cache/packages.*` 都留着，重复构建直接从 chroot 阶段起步，省掉约 700 MB 下载；
 需要干净的 chroot / 换过镜像源时再加 `--full-clean`。
+
+### 3.1 增量 ISO 更新（app-only）
+
+squashfs 不能原地替换单个文件；但 `chroot/` 就是上一版 squashfs 的源树。只改
+`app/raidforge/**`、`app/run.py` 或 `app/*.example` 时，可以跳过 live-build 编排，
+直接刷新 chroot 里的应用、重打 squashfs，再用 `binary/.disk/mkisofs` 记录的原
+xorriso 命令重打 ISO：
+
+```bash
+./tools/iso_update.sh --adopt        # 首次：把当前发布 ISO 记录为增量基线
+./tools/iso_update.sh --dry-run      # 只看分类，不写远端
+./tools/iso_update.sh                # 默认发布级 xz；旧 ISO 备份为 .prev
+./tools/iso_update.sh --test         # zstd + -test 后缀（更快）
+./tools/iso_update.sh --baseline     # 强制正常构建并重建基线
+./tools/iso_update.sh --fast         # 强制 build.sh --fast
+```
+
+分类规则：`webplane/`、`tests/`、`tools/`、文档等为 **NO_ISO**（只按需部署
+webplane）；`app/raidforge/**`、`app/run.py`、`app/*.example` 为 **APP_ONLY**；
+`config/`、`auto/`、`build.sh`、`app/requirements.txt`、`app/pyproject.toml`、
+vendor wheels 或混合改动为 **NORMAL**（回落 `build.sh`）。基线保存在
+`.tmp/iso-state.json`（已 gitignore），按文件清单比较，不依赖远端 git。
+远端 `iso_patch.sh` 会复刻 010/900 hook 的“先删后拷”和清理逻辑，校验 BUILD_ID
+canary、BIOS/UEFI El Torito 与 `RAIDFORGE` 卷标；发布级 xz 约 110–120 秒，
+`--test` 约 40–55 秒。
 
 **Agent 控制面参数**（生成 `/etc/raidforge/agent.yaml`，不写 token）：
 
@@ -605,8 +632,9 @@ GET  /api/raidforge/agent/tasks/{task_id}/cancel_requested
 - 首次打开某个阵列卡且缓存缺失时，自动下发一次 `list_pds` + `list_vds`；之后由
   “刷新数据 / 刷新硬盘 / 刷新 RAID”按钮手动触发。
 - 所有写操作仍通过 `POST /api/cp/tasks` 下发，破坏性对话框默认 `dry_run=true`；
-  提交后留在当前页，任务进度抽屉每 2 秒轮询，任务结束后自动重载当前阵列卡数据。
-  任务失败时保留旧缓存并提示数据时间。
+  提交后留在当前页，任务在后台由 2 秒 watcher 轮询，**不弹右侧抽屉**。下发/完成用
+  `ElMessage` 轻提示，页头“任务”链接可进入 Tasks 页查看详情；任务成功后自动重载
+  当前阵列卡数据，失败时保留旧缓存并提示错误码。
 
 新增只读端点：
 

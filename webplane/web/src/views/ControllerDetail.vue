@@ -3,6 +3,7 @@
     <PageHeader :title="controllerId" :subtitle="subtitle">
       <template #actions>
         <el-button @click="back">返回服务器</el-button>
+        <el-button link @click="$router.push(`/tasks?agent_id=${encodeURIComponent(agentId)}`)">任务</el-button>
         <el-button :loading="loading" @click="run">刷新页面</el-button>
         <el-button @click="refreshTopology(['list_pds', 'list_vds'])">刷新数据</el-button>
         <el-button type="primary" @click="newTask">新建任务</el-button>
@@ -146,13 +147,6 @@
       </div>
     </template>
 
-    <TaskDrawer
-      v-model="drawerVisible"
-      :task-ids="drawerTaskIds"
-      :title="drawerTitle"
-      @finished="onDrawerFinished"
-    />
-
     <EraseDisksDialog
       v-model="eraseVisible"
       :agent-id="agentId"
@@ -191,13 +185,13 @@ import { computed, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import PageHeader from '../components/PageHeader.vue'
-import TaskDrawer from '../components/TaskDrawer.vue'
 import EraseDisksDialog from '../components/dialogs/EraseDisksDialog.vue'
 import CreateRaidDialog from '../components/dialogs/CreateRaidDialog.vue'
 import DeleteVdDialog from '../components/dialogs/DeleteVdDialog.vue'
 import ClearConfigDialog from '../components/dialogs/ClearConfigDialog.vue'
 import { createTasks, getAgentController } from '../api'
 import { formatBytes, formatTime, usePolling } from '../composables/usePolling'
+import { useTaskWatch } from '../composables/useTaskWatch'
 
 const autoRefreshed = new Set()
 
@@ -216,9 +210,8 @@ const createRaidPreselected = ref([])
 const deleteVisible = ref(false)
 const clearVisible = ref(false)
 const activeVd = ref(null)
-const drawerVisible = ref(false)
-const drawerTaskIds = ref([])
-const drawerTitle = ref('任务进度')
+const { watchTasks } = useTaskWatch()
+let autoNoticeShown = false
 
 const { run, loading, error } = usePolling(async () => {
   const data = await getAgentController(agentId.value, controllerId.value)
@@ -226,7 +219,7 @@ const { run, loading, error } = usePolling(async () => {
   const key = `${agentId.value}:${controllerId.value}`
   if (!autoRefreshed.has(key) && (!data.has_pds || !data.has_vds)) {
     autoRefreshed.add(key)
-    await refreshTopology(['list_pds', 'list_vds'])
+    await refreshTopology(['list_pds', 'list_vds'], { auto: true })
   }
 }, 5000)
 
@@ -273,13 +266,18 @@ const membersText = (vd) => {
   return '-'
 }
 
-function openDrawer(taskIds, title) {
-  drawerTaskIds.value = taskIds
-  drawerTitle.value = title || '任务进度'
-  drawerVisible.value = true
+function openDrawer(taskIds, title, options = {}) {
+  watchTasks(taskIds, {
+    title: title || '任务',
+    failureHint: '保留当前数据',
+    silent: Boolean(options.silent),
+    onFinished: ({ anyFailed }) => {
+      if (!anyFailed) run()
+    }
+  })
 }
 
-async function refreshTopology(types) {
+async function refreshTopology(types, options = {}) {
   if (!agentId.value || !controllerId.value) return
   try {
     const payloads = types.map((type) => ({
@@ -290,23 +288,27 @@ async function refreshTopology(types) {
     }))
     const results = await createTasks(payloads)
     const ids = results.map((item) => item.task.task_id)
-    openDrawer(ids, types.length > 1 ? '刷新阵列卡数据' : `刷新 ${types[0]}`)
+    if (options.auto) {
+      if (!autoNoticeShown) {
+        autoNoticeShown = true
+        ElMessage.info('首次采集已下发，后台执行中')
+      }
+    } else {
+      ElMessage.success('刷新任务已下发，后台执行中')
+    }
+    openDrawer(
+      ids,
+      types.length > 1 ? '刷新阵列卡数据' : `刷新 ${types[0]}`,
+      { silent: Boolean(options.auto) }
+    )
   } catch (exc) {
     const detailText = (exc.fields || []).map((item) => `${item.field}: ${item.message}`).join('；')
     ElMessage.error(detailText ? `${exc.message}: ${detailText}` : exc.message || '下发刷新任务失败')
   }
 }
 
-const onDrawerFinished = ({ anyFailed }) => {
-  drawerVisible.value = false
-  if (anyFailed) {
-    ElMessage.warning('任务失败，保留当前数据')
-  } else {
-    run()
-  }
-}
-
 const onSubmitted = (taskIds) => {
+  ElMessage.success('任务已下发，后台执行中')
   openDrawer(taskIds, '执行任务')
 }
 
