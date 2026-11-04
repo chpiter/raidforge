@@ -5,6 +5,6 @@ normalised :class:`~raidforge.core.models.DiskInfo` objects and reports through
 the shared :class:`AppContext`.
 """
 
-from .state import AppContext
+from .state import AppContext, AppState
 
-__all__ = ["AppContext"]
+__all__ = ["AppContext", "AppState"]

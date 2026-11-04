@@ -2,7 +2,8 @@
 # the bookworm-era wheels resolve to), and Textual's DataTable/cursor/focus
 # behaviour has changed repeatedly across releases.  Bumping this means
 # re-running tools/check.sh against the new version and rebuilding the ISO.
-textual==0.89.1
+textual==7.5.0
+rich>=14.2.0
 pyyaml>=6.0,<7.0
 # Server-dimensional DOCX report.  All three are pure wheels on PyPI
 # (python-docx is pure Python; lxml/Pillow ship cp311 manylinux wheels), so the

@@ -1,64 +1,69 @@
-"""Top status bar (fixed, never scrolls)."""
+"""One-line status bar: server SN, IP address and login user."""
 
 from __future__ import annotations
-
 
 from textual.app import ComposeResult
 from textual.widget import Widget
 from textual.widgets import Static
+from rich.text import Text
 
-from ..state import AppContext
+from ..state import AppState
 
 
-class SessionStatusBar(Widget):
-    """Server identity, tool in use, network state, session id."""
+class StatusBar(Widget):
+    """Top row of the shell.
 
-    DEFAULT_CLASSES = ""
-
-    def __init__(self, ctx: AppContext, screen_name: str = "Dashboard") -> None:
-        super().__init__(id="status-bar")
-        self.ctx = ctx
-        self.screen_name = screen_name
-        self._left = Static("", classes="kv-value")
-        # ``sb-right`` instead of ``:last-child`` - Textual 0.89 (the version
-        # vendored into the ISO) only understands :first-of-type/:last-of-type.
-        self._right = Static("", classes="kv-value sb-right")
+    It updates only when the state changes; there is deliberately no
+    ``set_interval`` because the application never polls the host.
+    """
 
     def compose(self) -> ComposeResult:
-        yield self._left
-        yield self._right
+        yield Static("", id="status-sn", classes="status-left")
+        yield Static("", id="status-ip", classes="status-mid")
+        yield Static("", id="status-user", classes="status-right")
+
+    def update_state(self, state: AppState) -> None:
+        sn = state.server_sn or "-"
+        ip = state.ip_address or _ip_from_detail(state.network_detail) or "-"
+        user = state.login_user or "-"
+
+        self.query_one("#status-sn", Static).update(
+            Text.assemble(("SN ", "bold"), (sn, ""))
+        )
+        self.query_one("#status-ip", Static).update(
+            Text.assemble(("IP ", "bold"), (ip, ""))
+        )
+        self.query_one("#status-user", Static).update(
+            Text.assemble(("User ", "bold"), (user, ""))
+        )
+
+
+class SessionStatusBar(StatusBar):
+    """Legacy shim for the old screen stack; the new shell uses StatusBar."""
+
+    def __init__(self, ctx, screen_name: str = "") -> None:
+        super().__init__()
+        self.ctx = ctx
+        self.screen_name = screen_name
 
     def on_mount(self) -> None:
-        """Paint once and subscribe to periodic refreshes."""
-
-        self.refresh_content()
-        interval = self.ctx.cfg.ui.refresh_interval
-        if interval and interval > 0:
-            self.set_interval(interval, self.refresh_content)
+        self.update_state(self.ctx)
 
     def refresh_content(self) -> None:
-        """Recompute both halves of the bar."""
+        self.update_state(self.ctx)
 
-        ctx = self.ctx
-        detection = ctx.detection
-        tool = detection.tool if detection else "detecting..."
-        controllers = len(detection.controllers) if detection else 0
-        disk_count = len(ctx.disks)
-        selected = len(ctx.selection)
+    def set_message(self, text: str) -> None:
+        self.ctx.last_message = text
 
-        net = "up" if ctx.network_ready else "down"
-        serial = ctx.server_id.serial
-        if ctx.server_id.is_fallback:
-            serial = f"{serial} (derived)"
 
-        self._left.update(
-            f"[b]{self.screen_name}[/b]  SN:[b]{serial}[/b]  tool:{tool}  "
-            f"ctrl:{controllers}  disk:{disk_count}  sel:{selected}"
-        )
-        self._right.update(f"net:{net}  session:{ctx.evidence.session_id}")
+def _ip_from_detail(detail: str) -> str:
+    """``"eno1 192.168.40.50"`` -> ``"192.168.40.50"``."""
 
-    def set_screen_name(self, name: str) -> None:
-        """Update the leading screen label."""
+    parts = (detail or "").split()
+    for part in reversed(parts):
+        if part.count(".") == 3 and all(piece.isdigit() for piece in part.split(".")):
+            return part
+    return ""
 
-        self.screen_name = name
-        self.refresh_content()
+
+__all__ = ["StatusBar"]

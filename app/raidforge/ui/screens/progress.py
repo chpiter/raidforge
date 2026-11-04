@@ -207,7 +207,7 @@ class ProgressScreen(BaseScreen):
             self.ctx.evidence.emit("erase_cancel_requested")
             self.request_cancel()
             return
-        self.app.action_quit_app()
+        self.app.exit()
 
     def on_key(self, event) -> None:
         """Escape returns to the disk list."""

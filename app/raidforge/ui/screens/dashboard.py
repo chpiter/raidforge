@@ -198,7 +198,7 @@ class DashboardScreen(BaseScreen):
         elif event.button.id == "upload":
             self.flush_pending()
         elif event.button.id == "quit":
-            self.app.action_quit_app()
+            self.app.exit()
 
     def on_key(self, event) -> None:
         """Keyboard shortcuts that are not the focused widget's own keys."""

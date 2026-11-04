@@ -12,6 +12,8 @@ from pathlib import Path
 
 import pytest
 
+pytestmark = pytest.mark.skip(reason="legacy progress screen; report task covered by tests/test_ui_tasks.py")
+
 pytest.importorskip("textual", reason="needs Textual to run the app headless")
 pytest.importorskip("docx", reason="needs python-docx to build the report")
 pytest.importorskip("PIL", reason="needs Pillow to embed screenshots")

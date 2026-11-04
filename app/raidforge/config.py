@@ -65,6 +65,8 @@ class UiConfig:
     danger: str = "#FF5F56"
     ok: str = "#3DDC84"
     refresh_interval: float = 1.0
+    #: auto | raidforge | raidforge-mono.  "auto" falls back to mono on TERM=linux.
+    theme: str = "auto"
 
 
 @dataclass

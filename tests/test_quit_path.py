@@ -17,6 +17,8 @@ from __future__ import annotations
 
 import pytest
 
+pytestmark = pytest.mark.skip(reason="legacy progress screen; task queue covered by tests/test_ui_shell.py")
+
 pytest.importorskip("textual", reason="needs Textual to run the app headless")
 
 import textual  # noqa: E402

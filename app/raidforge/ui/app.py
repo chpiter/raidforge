@@ -1,238 +1,199 @@
-"""Textual application shell (constraint 3).
-
-The app owns nothing but the screen stack; every piece of state lives in
-:class:`~raidforge.ui.state.AppContext`.
-
-The palette is a registered monochrome theme (see :mod:`raidforge.ui.theme`),
-not a per-install configuration - the console has 16 colours and any third
-colour risks ending up invisible.
-"""
+"""Textual application shell for the seven-module RAIDFORGE UI."""
 
 from __future__ import annotations
 
 import logging
+import threading
+from pathlib import Path
 from typing import Callable, Optional
 
 from textual.app import App
 from textual.binding import Binding
-from textual.screen import Screen
 
 from ..core.models import SnapshotRecord
 from ..core.screenshots import take_snapshot
-from .screens import DashboardScreen
-from .state import AppContext
-from .theme import DEFAULT_CSS, MONO_THEME_NAME, mono_theme
+from .messages import Toast
+from .palette import (
+    THEME_BLUE,
+    THEME_MONO,
+    mono_theme,
+    raidforge_theme,
+    select_theme_name,
+)
+from .screens.main import MainScreen
+from .state import AppState
 
 log = logging.getLogger(__name__)
 
 
 class RaidforgeApp(App[None]):
-    """Root application: fixed status/key bars plus a stack of screens."""
-
     TITLE = "RAIDFORGE"
     SUB_TITLE = "RAID management and auditable disk erase"
 
-    #: The palette is fixed; a colour picker in a command palette would only
-    #: invite someone to break the one rule the console cares about.
+    CSS_PATH = "styles/app.tcss"
     ENABLE_COMMAND_PALETTE = False
-
-    CSS = DEFAULT_CSS
+    AUTO_FOCUS = None
 
     BINDINGS = [
+        Binding("ctrl+1", "goto('dashboard')", "Dashboard", show=False, priority=True),
+        Binding("ctrl+2", "goto('controllers')", "Controllers", show=False, priority=True),
+        Binding("ctrl+3", "goto('physical')", "Physical", show=False, priority=True),
+        Binding("ctrl+4", "goto('virtual')", "Virtual", show=False, priority=True),
+        Binding("ctrl+5", "goto('tasks')", "Tasks", show=False, priority=True),
+        Binding("ctrl+6", "goto('evidence')", "Evidence", show=False, priority=True),
+        Binding("ctrl+7", "goto('settings')", "Settings", show=False, priority=True),
+        Binding("ctrl+p", "palette", "Commands", show=False, priority=True),
+        Binding("f1", "help", "Help", show=False),
+        Binding("question_mark", "help", "Help", show=False),
+        Binding("f5", "refresh", "Refresh", show=False),
+        Binding("ctrl+q", "quit_app", "Quit", priority=True),
         Binding("ctrl+c", "quit_app", "Quit", priority=True),
-        Binding("q", "quit_app", "Quit"),
     ]
 
-    def __init__(self, ctx: AppContext) -> None:
+    def __init__(self, state: AppState) -> None:
         super().__init__()
-        self.ctx = ctx
+        self.state = state
         self.snapshot_counter = 0
-        # Order matters: register first, then select, or Textual silently falls
-        # back to the default (colour) theme.
+        self._ui_thread_id = threading.get_ident()
+        self.register_theme(raidforge_theme())
         self.register_theme(mono_theme())
-        self.theme = MONO_THEME_NAME
+        self.theme = select_theme_name(state.cfg.ui.theme)
 
     # -- lifecycle ----------------------------------------------------------
     def on_mount(self) -> None:
-        """Show the dashboard and record the session start."""
-
-        self.ctx.evidence.emit(
+        self.state.evidence.emit(
             "tui_started",
-            app_version=self.ctx.cfg.app_version,
-            dry_run=self.ctx.cfg.dry_run,
+            app_version=self.state.cfg.app_version,
+            dry_run=self.state.cfg.dry_run,
+            theme=self.theme,
             pid=None,
         )
-        self.push_screen(DashboardScreen(self.ctx))
+        self.push_screen(MainScreen(self.state))
+        self.set_timer(0.2, self._focus_nav)
 
     def on_unmount(self) -> None:  # pragma: no cover - trivial
-        self.ctx.evidence.emit("tui_stopped")
+        self.state.evidence.emit("tui_stopped")
 
-    # -- helpers ------------------------------------------------------------
+    def _focus_nav(self) -> None:
+        main = self._main_screen()
+        if main is None:
+            return
+        try:
+            main.query_one("#nav-bar").focus()
+        except Exception:  # pragma: no cover
+            pass
+
+    # -- snapshots ----------------------------------------------------------
     async def take_snapshot(self, name: str, epoch: Optional[int] = None) -> Optional[str]:
-        """Capture the current screen into the evidence ``snapshots/`` folder.
+        """Capture the current screen into the evidence ``snapshots/`` folder."""
 
-        Args:
-            name: Caller supplied stem, e.g. ``03-disk-list``.
-            epoch: Erase run this screen belongs to. Defaults to the context's
-                current epoch; the confirm/progress screens pass theirs
-                explicitly so a late capture cannot be attributed to the next
-                run.
-
-        Returns:
-            Absolute path of the written SVG, or ``None``.
-        """
-
-        from pathlib import Path
         import re
 
-        # Call sites pass names such as "03-disk-list"; the counter is the
-        # authority for ordering, so drop the caller's own number instead of
-        # producing "01-03-disk-list".
         stem = re.sub(r"^\d+-", "", name)
         self.snapshot_counter += 1
         stamped = f"{self.snapshot_counter:02d}-{stem}"
-        target = await take_snapshot(self, self.ctx.evidence, stamped)
+        target = await take_snapshot(self, self.state.evidence, stamped)
         if target:
             try:
-                relative = Path(target).resolve().relative_to(self.ctx.evidence.root.resolve()).as_posix()
+                relative = Path(target).resolve().relative_to(self.state.evidence.root.resolve()).as_posix()
             except ValueError:  # pragma: no cover - custom evidence writer
                 relative = str(target)
-            self.ctx.snapshot_log.append(
+            self.state.snapshot_log.append(
                 SnapshotRecord(
                     name=stamped,
                     stem=stem,
                     path=relative,
-                    run_epoch=self.ctx.run_epoch if epoch is None else epoch,
+                    run_epoch=self.state.run_epoch if epoch is None else epoch,
                 )
             )
         return str(target) if target else None
 
-    def push_top_screen(self, screen: Screen) -> None:
-        """Replace the whole stack with a single screen (used on restart)."""
+    def request_snapshot(self, name: str, epoch: int = 0) -> None:
+        async def _capture() -> None:
+            try:
+                await self.take_snapshot(name, epoch=epoch)
+            except Exception:  # pragma: no cover - snapshots are best effort
+                pass
 
+        self.run_worker(_capture, name=f"snapshot-{name}")
+
+    # -- helpers ------------------------------------------------------------
+    def call_ui(self, fn: Callable, *args, **kwargs) -> None:
+        try:
+            if threading.get_ident() == self._ui_thread_id:
+                fn(*args, **kwargs)
+            else:
+                self.call_from_thread(fn, *args, **kwargs)
+        except Exception:  # pragma: no cover - app already gone
+            pass
+
+    def push_top_screen(self, screen) -> None:
         while len(self.screen_stack) > 1:
             self.pop_screen()
         self.push_screen(screen)
 
-    def call_ui(self, fn: Callable, *args, **kwargs) -> None:
-        """Hop back to the UI thread, tolerating a shutting-down app.
+    # -- global navigation --------------------------------------------------
+    def _main_screen(self) -> Optional[MainScreen]:
+        for screen in self.screen_stack:
+            if isinstance(screen, MainScreen):
+                return screen
+        return None
 
-        Worker threads outlive the app by design (they are daemons), so a late
-        callback must not raise ``NoActiveAppError`` into the thread.
-        """
+    def action_goto(self, page_name: str) -> None:
+        from .models import PageId
 
+        main = self._main_screen()
+        if main is None:
+            return
+        while self.screen is not main and len(self.screen_stack) > 1:
+            self.pop_screen()
         try:
-            self.call_from_thread(fn, *args, **kwargs)
-        except Exception:  # pragma: no cover - app already gone
-            pass
-
-    # -- per-run publish ----------------------------------------------------
-    def start_run_publish(self, epoch: int) -> None:
-        """Capture the progress screen, then publish the cumulative report.
-
-        The capture is awaited *before* the daemon publisher starts so the DOCX
-        always contains this run's progress screenshot.
-        """
-
-        async def _capture_then_publish() -> None:
-            try:
-                from .screens.progress import ProgressScreen
-                from .screens.raid_progress import RaidProgressScreen
-
-                if self.ctx.cfg.evidence.snapshot_on_screen_change:
-                    if isinstance(self.screen, ProgressScreen):
-                        await self.take_snapshot("05-progress", epoch=epoch)
-                    elif isinstance(self.screen, RaidProgressScreen):
-                        await self.take_snapshot("05-raid-progress", epoch=epoch)
-            except Exception:  # pragma: no cover - screenshots are best effort
-                pass
-            self.ctx.spawn(self._publish_run, name=f"publish-run-{epoch}")
-
-        self.run_worker(_capture_then_publish, name=f"capture-publish-{epoch}")
-
-    def _publish_run(self) -> None:
-        """Daemon worker: report + manifest + best-effort upload for one run."""
-
-        from ..core.publish import PublishOptions, publish_from_context
-
-        def status(text: str) -> None:
-            self.ctx.publish_state.set_status(text)
-            if not self.ctx.shutdown_event.is_set():
-                self.call_ui(self.show_publish_status, text)
-
-        publish_from_context(
-            self.ctx,
-            PublishOptions(
-                phase="run",
-                upload=self.ctx.cfg.report.enabled,
-                queue_on_failure=False,
-                budget_seconds=self.ctx.cfg.report.run_upload_seconds,
-                skip_route_wait=self.ctx.network_ready,
-                on_status=status,
-            ),
-        )
-
-    def show_publish_status(self, text: str) -> None:
-        """Mirror the publisher status without touching a detached screen."""
-
-        try:
-            screen = self.screen
-            setter = getattr(screen, "set_message", None)
-            if callable(setter):
-                setter(text)
-            refresh = getattr(screen, "refresh_publish_status", None)
-            if callable(refresh):
-                refresh()
-        except Exception:  # pragma: no cover - app shutting down
-            pass
-
-    # -- actions ------------------------------------------------------------
-    def action_quit_app(self) -> None:
-        """The single exit decision point.
-
-        While an erase run is in flight the first Q only *cancels* it: killing
-        the process outright would orphan the running vendor command and its
-        result would never reach the evidence log.  The operator presses Q again
-        (or Esc) once the run has stopped.
-        """
-
-        from .screens.progress import ProgressScreen  # local import: avoid a cycle
-        from .screens.raid_progress import RaidProgressScreen
-
-        # The run state, not cancel_event, decides "in flight": _finish clears
-        # cancel_event, so an already-finished run would otherwise be treated
-        # as running and the first Q would park it in a bogus cancelling state.
-        active = getattr(self.screen, "is_run_active", None)
-        running = (
-            isinstance(self.screen, (ProgressScreen, RaidProgressScreen))
-            and callable(active)
-            and active()
-        )
-        if running:
-            self.ctx.cancel_event.set()
-            self.ctx.evidence.emit("quit_requested", cancel_run=True)
-            try:
-                self.screen.request_cancel()
-            except Exception:  # pragma: no cover - defensive
-                pass
+            main.show_page(PageId(page_name))
+        except ValueError:
             return
 
-        self.ctx.evidence.emit("quit_requested", cancel_run=self.ctx.cancel_event.is_set())
-        self.ctx.shutdown_event.set()
+    def action_palette(self) -> None:
+        main = self._main_screen()
+        if main is not None:
+            main.action_palette()
+
+    def action_help(self) -> None:
+        main = self._main_screen()
+        if main is not None:
+            main.action_help()
+
+    def action_refresh(self) -> None:
+        main = self._main_screen()
+        if main is not None:
+            main.action_refresh()
+
+    # -- quit / cancel ------------------------------------------------------
+    def action_quit_app(self) -> None:
+        """Ctrl+Q: cancel a running task first, exit on the second press."""
+
+        runner = self.state.task_runner
+        task_id = self.state.active_task_id
+        if task_id is not None and runner is not None:
+            if not self.state.cancel_event.is_set():
+                if runner.cancel_active():  # type: ignore[union-attr]
+                    self.state.evidence.emit("quit_requested", cancel_run=True)
+                    try:
+                        self.screen.post_message(
+                            Toast("cancelling - press Ctrl+Q again to exit", "warn")
+                        )
+                    except Exception:  # pragma: no cover
+                        pass
+                    return
+            else:
+                # Second press: exit even if the vendor command is still running.
+                pass
+        self.state.evidence.emit("quit_requested", cancel_run=self.state.cancel_event.is_set())
+        self.state.shutdown_event.set()
         self.exit()
 
 
-def create_app(ctx: AppContext) -> RaidforgeApp:
-    """Build the application.
-
-    Args:
-        ctx: Shared application context.
-
-    Returns:
-        A ready-to-run application instance.
-    """
-
-    return RaidforgeApp(ctx)
+def create_app(state: AppState) -> RaidforgeApp:
+    return RaidforgeApp(state)
 
 
 __all__ = ["RaidforgeApp", "create_app"]

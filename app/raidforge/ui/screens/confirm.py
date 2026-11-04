@@ -1,21 +1,11 @@
-"""Confirmation modal (constraint 8).
+"""Unified confirmation gate for erase, create, delete and clear-config.
 
-Nothing can reach :class:`~raidforge.ui.screens.progress.ProgressScreen` without
-passing through here.  The screen shows:
-
-* the exact, shell-quoted dry-run command list;
-* the destination disks with their media type and capacity;
-* a short acknowledgement field: the operator types ``yes`` to unlock.
-
-The acknowledgement used to be ``CONFIRM-{server_sn}``.  That proved far too
-much typing on a console keyboard, and a long string typed blind is its own
-hazard - a short, deliberate ``yes`` keeps the gate meaningful without inviting
-typos.
+The acknowledgement word remains the short, deliberate ``yes`` (or the
+controller id for clear-config), as documented in the README.  The full
+``CONFIRM-{server_sn}`` token is shown as an audit identifier but is not typed.
 """
 
 from __future__ import annotations
-
-from typing import Dict, List, Optional
 
 from textual.app import ComposeResult
 from textual.binding import Binding
@@ -23,158 +13,132 @@ from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen
 from textual.widgets import Button, Input, Label, Static
 
-from ...core.models import CommandPlan, DiskInfo
-from ..state import AppContext
-
-#: The operator types this, case-insensitively, to unlock execution.
-ACK_WORD = "yes"
+from ..focus import capture_focus
+from ..models import ConfirmRequest
+from ..state import AppState
 
 
 class ConfirmModal(ModalScreen[bool]):
-    """Last gate before anything is written to a controller."""
+    BINDINGS = [Binding("escape", "cancel", "Cancel", priority=True)]
 
-    BINDINGS = [Binding("escape", "cancel", "Cancel")]
-
-    CSS = """
-    ConfirmModal {
-        align: center middle;
-    }
-    #dialog {
-        width: 92%;
-        height: 92%;
-        border: thick $foreground;
-        background: $background;
-        padding: 0 1;
-        /* An 80x25 console leaves ~22 usable rows; let the dialog scroll rather
-           than silently clipping the command list or the buttons. */
-        overflow-y: auto;
-    }
-    #commands {
-        /* Never collapse to nothing: the dry-run commands are the whole point. */
-        min-height: 5;
-        height: 1fr;
-        border: round $foreground;
-        padding: 0 1;
-        overflow-y: auto;
-    }
-    #actions {
-        /* Fixed height: with `auto` the 3-row buttons get clipped to one line on
-           an 80x25 console and lose their borders. */
-        height: 3;
-    }
-    #actions Button {
-        margin: 0 2 0 0;
-        min-width: 16;
-    }
-    """
-
-    def __init__(
-        self,
-        ctx: AppContext,
-        plans: List[CommandPlan],
-        disks: Optional[Dict[str, DiskInfo]] = None,
-    ) -> None:
+    def __init__(self, state: AppState, request: ConfirmRequest) -> None:
         super().__init__()
-        self.ctx = ctx
-        self.plans = plans
-        self.disks = dict(disks or {})
-        self._error = Static("", classes="danger")
-        self._ack_input = Input(placeholder=ACK_WORD, id="ack", password=False)
+        self.state = state
+        self.request = request
+        self._error = Static("", id="confirm-error")
+        self._ack = Input(placeholder=request.ack_word, id="confirm-ack")
+        self._focus = capture_focus()
 
-    # -- layout -------------------------------------------------------------
     def compose(self) -> ComposeResult:
-        with Vertical(id="dialog"):
-            yield Label(f"[b]Confirm erasure of {len(self.plans)} disk(s)[/b]", classes="title")
-            yield Static(self._disk_summary(), classes="muted")
-            yield Static(
-                "[b]!! IRREVERSIBLE[/b]: the commands below are only *submitted* to the "
-                "controller - the erase itself continues asynchronously.",
-                classes="muted",
-            )
+        request = self.request
+        with Vertical(id="confirm-dialog"):
+            yield Label(f"[b]{request.title}[/b]", classes="title")
+            if request.summary:
+                yield Static("\n".join(request.summary), classes="muted")
+            if request.warnings:
+                yield Static("\n".join(f"!! {line}" for line in request.warnings), classes="danger")
             yield Label("[b]Dry run (exact commands to be executed):[/b]")
-            with VerticalScroll(id="commands"):
-                yield Static(self._render_commands())
-            yield Static(f"Type [b]{ACK_WORD}[/b] and press Enter to unlock execution:")
-            yield self._ack_input
+            with VerticalScroll(id="confirm-commands"):
+                yield Static(self._commands_text())
+            yield Static(f"Type [b]{request.ack_word}[/b] and press Enter to unlock execution:")
+            yield self._ack
             yield self._error
-            with Horizontal(id="actions"):
-                # No `variant=`: the palette has exactly two colours.  The label
-                # and the focus highlight carry the meaning.
-                yield Button("Execute (erase)", id="execute")
-                yield Button("Cancel [Esc]", id="cancel")
+            with Horizontal(id="confirm-actions"):
+                yield Button("Execute", id="confirm-execute")
+                yield Button("Cancel [Esc]", id="confirm-cancel")
 
     def on_mount(self) -> None:
-        """Focus the acknowledgement field and record that the modal appeared."""
+        self._focus = capture_focus()
+        try:
+            self.query_one("#confirm-commands").can_focus = False
+        except Exception:  # pragma: no cover
+            pass
+        self._ack.focus()
+        payload = {
+            "ack_required": self.request.ack_word,
+            "commands": self.request.commands,
+            "audit_token": self.request.audit_token,
+        }
+        if self.request.event_prefix == "raid_confirm":
+            self.state.evidence.emit("raid_confirm_shown", action=self.request.action, **payload)
+        else:
+            self.state.evidence.emit(
+                "confirm_modal_shown",
+                disk_count=len(self.request.commands),
+                **payload,
+            )
+        self._snapshot()
 
-        self.ctx.evidence.emit(
-            "confirm_modal_shown",
-            disk_count=len(self.plans),
-            ack_required=ACK_WORD,
-            commands=[plan.to_json_obj() for plan in self.plans],
-        )
-        self.query_one("#ack", Input).focus()
-        self._schedule_snapshot("04-confirm")
+    def on_unmount(self) -> None:
+        self._focus.restore()
 
-    def _schedule_snapshot(self, name: str) -> None:
-        """Capture the rendered modal - it is the key audit artefact."""
+    def _commands_text(self) -> str:
+        return "\n".join(
+            f"{index:>3}. {command}" for index, command in enumerate(self.request.commands, start=1)
+        ) or "(no commands)"
 
-        if not self.ctx.cfg.evidence.snapshot_on_screen_change:
+    def _snapshot(self) -> None:
+        if not self.state.cfg.evidence.snapshot_on_screen_change:
             return
+        name = self.request.snapshot_name
 
         async def _capture() -> None:
             try:
-                await self.app.take_snapshot(name, epoch=self.ctx.run_epoch)  # type: ignore[attr-defined]
-            except Exception:  # pragma: no cover - screenshots are best effort
+                await self.app.take_snapshot(name, epoch=self.request.epoch)  # type: ignore[attr-defined]
+            except Exception:  # pragma: no cover
                 pass
 
         self.run_worker(_capture, name=f"snapshot-{name}")
 
-    # -- helpers ------------------------------------------------------------
-    def _disk_summary(self) -> str:
-        lines: List[str] = []
-        for plan in self.plans:
-            disk = self.disks.get(plan.disk_id) or self.ctx.disk_by_id(plan.disk_id)
-            size = disk.size_human if disk else "-"
-            lines.append(f"  {plan.disk_id:<20} {plan.medium.value:<8} {size:<12} {plan.label}")
-        return "\n".join(lines) or "  (none)"
-
-    def _render_commands(self) -> str:
-        numbered = [f"{index:>3}. {plan.dry_run_text}" for index, plan in enumerate(self.plans, start=1)]
-        return "\n".join(numbered) or "(no commands)"
-
     def _try_approve(self) -> None:
-        """Validate the acknowledgement word and dismiss accordingly."""
-
-        typed = self._ack_input.value.strip()
-        if typed.lower() != ACK_WORD:
-            self._error.update(f'type "{ACK_WORD}" to confirm - nothing was executed')
-            self.ctx.evidence.emit("confirm_ack_rejected", typed=typed)
-            # Clear the field: a rejected attempt must not be silently extended
-            # into a valid one by whatever the operator types next.
-            self._ack_input.value = ""
-            self._ack_input.focus()
+        typed = self._ack.value.strip()
+        if typed.lower() != self.request.ack_word.lower():
+            self._error.update(f'type "{self.request.ack_word}" to confirm - nothing was executed')
+            self._emit_rejected(typed)
+            self._ack.value = ""
+            self._ack.focus()
             self.app.bell()
             return
-        self.ctx.evidence.emit("confirm_ack_accepted", ack=ACK_WORD)
+        self._emit_accepted()
         self.dismiss(True)
 
-    # -- events -------------------------------------------------------------
-    def on_input_submitted(self, event: Input.Submitted) -> None:
-        """Enter inside the acknowledgement field attempts approval."""
+    def _emit_rejected(self, typed: str) -> None:
+        if self.request.event_prefix == "raid_confirm":
+            self.state.evidence.emit("raid_confirm_rejected", action=self.request.action, typed=typed)
+        else:
+            self.state.evidence.emit("confirm_ack_rejected", typed=typed)
 
-        if event.input.id == "ack":
+    def _emit_accepted(self) -> None:
+        if self.request.event_prefix == "raid_confirm":
+            self.state.evidence.emit(
+                "raid_confirm_accepted", action=self.request.action, ack=self.request.ack_word
+            )
+        else:
+            self.state.evidence.emit("confirm_ack_accepted", ack=self.request.ack_word)
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        if event.input.id == "confirm-ack":
             self._try_approve()
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
-        """Handle the two action buttons."""
-
-        if event.button.id == "execute":
+        if event.button.id == "confirm-execute":
             self._try_approve()
         else:
             self.action_cancel()
 
     def action_cancel(self) -> None:
-        """Dismiss without approval."""
-
-        self.ctx.evidence.emit("confirm_cancelled", disk_count=len(self.plans))
+        if self.request.event_prefix == "raid_confirm":
+            self.state.evidence.emit(
+                "raid_confirm_cancelled",
+                action=self.request.action,
+                commands=len(self.request.commands),
+            )
+        else:
+            self.state.evidence.emit(
+                "confirm_cancelled",
+                disk_count=len(self.request.commands),
+            )
         self.dismiss(False)
+
+
+__all__ = ["ConfirmModal"]

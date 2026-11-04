@@ -31,7 +31,7 @@ from .core.record import is_inner_process, recorder_available, run_recorded
 from .core.report import retry_pending
 from .core.serverid import ServerId, resolve_server_id
 from .ui.app import create_app
-from .ui.state import AppContext
+from .ui.state import AppContext, AppState
 
 log = logging.getLogger("raidforge")
 
@@ -101,7 +101,9 @@ def build_context(cfg: Config, server_id: Optional[ServerId] = None, evidence: O
     server_id = server_id or resolve_server_id()
     wrapper = _WrapperState.load()
     evidence = evidence or EvidenceSession(cfg, server_id.serial, session_id=wrapper.session_id)
-    return AppContext(cfg=cfg, evidence=evidence, server_id=server_id)
+    state = AppContext(cfg=cfg, evidence=evidence, server_id=server_id)
+    AppState.activate(state)
+    return state
 
 
 @dataclass(frozen=True)
@@ -227,7 +229,7 @@ def run_direct(ctx: AppContext) -> int:
     """Run the TUI in this process."""
 
     app = create_app(ctx)
-    app.run()
+    app.run(mouse=False)
     manifest = finalize_session(ctx)
     log.info("session %s finalised with %s files", ctx.evidence.session_id, manifest.get("file_count"))
     return EXIT_OK

@@ -1,177 +1,122 @@
-"""Monochrome guard, live half: inspect what the app really renders.
+"""Live palette checks: the mono theme has no colour, the blue theme does.
 
-The static guard (``test_mono_static.py``) proves the stylesheet only mentions
-black and white.  This one renders the four screens and inspects the *resolved*
-output, which is the only way to catch a leak from a widget's own built-in CSS,
-a Button ``variant`` or a theme variable that was never overridden.
-
-Two candidate sources were rejected before settling on this one:
-
-* the raw terminal stream - Textual's headless driver discards writes
-  (``HeadlessDriver.write`` is a no-op), so there is nothing to inspect;
-* the SVG screenshot - Rich's SVG writer adds its own chrome (three coloured
-  "window" dots, a #292929 frame, its own default text colour), which would
-  drown the signal.
-
-What the compositor hands to the terminal is the real thing: a list of styled
-segments.  Every foreground/background colour in there must be pure black or
-pure white.
-
-Skipped when Textual is not installed (a bare Windows checkout has no Textual;
-the build host and the ISO chroot do).
+The compositor segments are the real thing Textual would send to the terminal;
+the SVG writer adds its own chrome, so it is not used here.
 """
 
 from __future__ import annotations
+
+import asyncio
+import os
+import tempfile
 
 import pytest
 
 pytest.importorskip("textual", reason="live palette check needs Textual")
 
-import textual  # noqa: E402
-
-#: The shipped wheel (see app/requirements.txt).  Textual's widget/CSS behaviour
-#: changes between releases, so a frame captured from a newer dev environment
-#: proves nothing about the appliance.  A local 8.x install used to fail these
-#: two tests for reasons that do not exist inside the ISO.
-PINNED_TEXTUAL = "0.89.1"
-needs_pinned_textual = pytest.mark.skipif(
-    getattr(textual, "__version__", "") != PINNED_TEXTUAL,
-    reason=f"verified against textual {PINNED_TEXTUAL}; running {getattr(textual, '__version__', '?')}",
-)
+from rich.style import Style  # noqa: E402
 
 from raidforge.config import load_config  # noqa: E402
 from raidforge.core.evidence import EvidenceSession  # noqa: E402
-from raidforge.core.models import DiskInfo, Medium, Protocol, Vendor  # noqa: E402
 from raidforge.core.serverid import resolve_server_id  # noqa: E402
-from raidforge.ui.app import create_app  # noqa: E402
-from raidforge.ui.state import AppContext  # noqa: E402
-from raidforge.ui.theme import MONO_THEME_NAME  # noqa: E402
+from raidforge.ui.state import AppState  # noqa: E402
 
-ALLOWED_TRIPLETS = {(0, 0, 0), (255, 255, 255)}
+MONO_ALLOWED = {(0, 0, 0), (255, 255, 255)}
+
+
+def _flatten(strip):
+    segments = getattr(strip, "_segments", None)
+    if segments is not None:
+        for segment in segments:
+            yield segment
+        return
+    try:
+        children = list(strip)
+    except TypeError:
+        return
+    for child in children:
+        yield from _flatten(child)
 
 
 def _segments(app) -> list:
-    """Flatten the current screen into ``(text, style)`` pairs."""
-
     update = app.screen._compositor.render_full_update()
     strips = getattr(update, "strips", None) or update
     collected = []
     for strip in strips:
-        for segment in getattr(strip, "_segments", []):
+        for segment in _flatten(strip):
             collected.append((segment.text, segment.style))
     return collected
 
 
-def _bad_colours(segments) -> set:
-    """Return the non-monochrome colours present in a frame."""
-
-    offenders = set()
+def _colour_triplets(segments) -> set:
+    found = set()
     for _text, style in segments:
         if style is None:
             continue
         for attribute in ("color", "bgcolor"):
             colour = getattr(style, attribute, None)
             triplet = getattr(colour, "triplet", None)
-            if triplet is None:
-                continue
-            if tuple(triplet) not in ALLOWED_TRIPLETS:
-                offenders.add((attribute, str(triplet)))
-    return offenders
+            if triplet is not None:
+                found.add(tuple(triplet))
+    return found
 
 
-async def _capture_screens():
-    """Render every screen; return ``(theme name, {screen: (bad colours, count)})``."""
-
+def _make_state() -> AppState:
+    tmp = tempfile.mkdtemp()
     cfg = load_config(
         overrides={
-            "evidence": {"root": "/tmp/mono-live-evidence"},
+            "evidence": {"root": tmp + "/evidence"},
             "report": {"enabled": False},
-            "tools": {"command_timeout": 5},
+            "tools": {"command_timeout": 2},
         }
     )
     sid = resolve_server_id(force_values={"system_serial": "SN-MONO-TEST"})
-    ev = EvidenceSession(cfg, sid.serial)
-    ctx = AppContext(cfg=cfg, evidence=ev, server_id=sid)
-    ctx.disks = [
-        DiskInfo(
-            disk_id="c0e32s0", controller_index=0, vendor=Vendor.LSI,
-            medium=Medium.HDD, protocol=Protocol.SAS, enclosure=32, slot=0,
-            model="ST2000NM0008", serial="ZTN1", size_bytes=2000398934016,
-            raid_state="Onln",
-        ),
-        DiskInfo(
-            disk_id="c0e32s1", controller_index=0, vendor=Vendor.LSI,
-            medium=Medium.SSD, protocol=Protocol.SATA, enclosure=32, slot=1,
-            model="S4510", raw={"SED": "Y"},
-        ),
-    ]
-    app = create_app(ctx)
-    frames = {}
-
-    def snap(name: str) -> None:
-        segments = _segments(app)
-        frames[name] = (_bad_colours(segments), len(segments))
-
-    async with app.run_test(size=(80, 25)) as pilot:
-        await pilot.pause(0.4)
-        snap("dashboard")
-
-        await pilot.press("enter")           # DiskList
-        await pilot.pause(0.3)
-        snap("disk-list")
-
-        await pilot.press("space")           # select row 0
-        await pilot.pause(0.15)
-        await pilot.press("enter")           # ConfirmModal
-        await pilot.pause(0.3)
-        snap("confirm")
-
-        for char in "yes":                   # unlock
-            await pilot.press(char)
-        await pilot.press("enter")           # Progress
-        await pilot.pause(0.6)
-        snap("progress")
-
-        await pilot.press("escape")
-        await pilot.pause(0.2)
-        await pilot.press("escape")          # DiskList -> Dashboard
-        await pilot.pause(0.2)
-        await pilot.press("s")               # Settings
-        await pilot.pause(0.3)
-        snap("settings")
-        await pilot.press("escape")
-        await pilot.pause(0.2)
-        theme_name = app.theme
-
-    return theme_name, frames
+    return AppState(cfg=cfg, evidence=EvidenceSession(cfg, sid.serial), server_id=sid)
 
 
-@needs_pinned_textual
-def test_only_black_and_white_are_rendered():
-    import asyncio
+async def _capture(theme: str):
+    os.environ["RAIDFORGE_THEME"] = theme
+    try:
+        from raidforge.ui.app import create_app
 
-    theme_name, frames = asyncio.run(_capture_screens())
-    assert theme_name == MONO_THEME_NAME, f"theme is {theme_name!r}, expected {MONO_THEME_NAME!r}"
+        state = _make_state()
+        app = create_app(state)
+        frames = {}
+        async with app.run_test(size=(80, 25)) as pilot:
+            await pilot.pause(0.4)
+            for index in range(1, 8):
+                await pilot.press(f"ctrl+{index}")
+                await pilot.pause(0.15)
+                segments = _segments(app)
+                frames[f"page-{index}"] = (segments, _colour_triplets(segments))
+            return app.theme, frames
+    finally:
+        os.environ.pop("RAIDFORGE_THEME", None)
 
-    problems = [f"{name}: {sorted(colours)}" for name, (colours, _count) in frames.items() if colours]
-    assert not problems, "non-monochrome colours rendered:\n" + "\n".join(problems)
+
+def test_mono_theme_renders_only_black_and_white():
+    theme, frames = asyncio.run(_capture("raidforge-mono"))
+    assert theme == "raidforge-mono"
+    for name, (_segments, colours) in frames.items():
+        bad = colours - MONO_ALLOWED
+        assert not bad, f"{name} rendered non-monochrome colours: {bad}"
 
 
-@needs_pinned_textual
-def test_every_screen_renders_something():
-    """A blank frame would make the palette check vacuously pass."""
+def test_blue_theme_renders_the_72_palette():
+    theme, frames = asyncio.run(_capture("raidforge"))
+    assert theme == "raidforge"
+    all_colours = set()
+    for _segments, colours in frames.values():
+        all_colours |= colours
+    # #4FC3F7 accent or #002B49 background must be present somewhere.
+    assert (79, 195, 247) in all_colours or (0, 43, 73) in all_colours, all_colours
 
-    import asyncio
 
-    _theme, frames = asyncio.run(_capture_screens())
-    for name, (_colours, count) in frames.items():
-        assert count > 20, f"{name} produced only {count} styled segments"
+def test_every_page_renders_something():
+    _theme, frames = asyncio.run(_capture("raidforge"))
+    for name, (segments, _colours) in frames.items():
+        assert len(segments) > 20, f"{name} produced only {len(segments)} styled segments"
 
 
 def test_the_colour_scanner_can_actually_fail():
-    """Self-check: a leaked colour must be reported, not ignored."""
-
-    from rich.style import Style
-
-    offenders = _bad_colours([("boom", Style.parse("#4CC2FF on #000000"))])
-    assert offenders, "the colour scanner missed a cyan foreground"
+    assert _colour_triplets([("boom", Style.parse("#4CC2FF on #000000"))])

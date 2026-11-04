@@ -1,0 +1,783 @@
+/* RAIDFORGE multi-module shell.
+ *
+ * Only theme variables are used here.  The same file renders the 7.2 deep-blue
+ * palette on a colour terminal and pure black/white on the 16-colour console.
+ * Layout order is fixed: StatusBar / NavBar / Breadcrumb / Content / HotkeyBar,
+ * each chrome row exactly one line high.
+ */
+
+Screen {
+    background: $background;
+    color: $foreground;
+}
+
+#app-root {
+    width: 100%;
+    height: 100%;
+    layout: vertical;
+}
+
+/* -- chrome ------------------------------------------------------------- */
+
+#status-bar {
+    width: 100%;
+    height: 1;
+    background: $surface;
+    color: $text-muted;
+    padding: 0 1;
+    layout: horizontal;
+}
+
+#status-bar .status-left {
+    width: 1fr;
+    color: $foreground;
+    text-style: bold;
+}
+
+#status-bar .status-mid {
+    width: auto;
+    color: $text-muted;
+    padding: 0 2;
+}
+
+#status-bar .status-right {
+    width: auto;
+    color: $text-muted;
+    text-align: right;
+}
+
+#nav-bar {
+    width: 100%;
+    height: 3;
+    background: $nav-bg;
+    layout: horizontal;
+    padding: 0;
+}
+
+.nav-item {
+    width: auto;
+    height: 3;
+    padding: 0;
+    content-align: center middle;
+    color: $text-muted;
+    background: $nav-bg;
+    border: none;
+}
+
+.nav-item.-active {
+    background: $nav-active-bg;
+    color: $nav-active-fg;
+    text-style: bold;
+    border: tab $nav-tab-border;
+}
+
+.nav-item.-cursor {
+    background: $surface;
+    color: $foreground;
+    text-style: bold;
+}
+
+.nav-item.-active.-cursor {
+    background: $nav-active-bg;
+    color: $nav-active-fg;
+}
+
+#nav-bar:focus .nav-item.-active {
+    border: tab $accent;
+}
+
+#breadcrumb {
+    width: 100%;
+    height: 1;
+    background: $background;
+    color: $text-muted;
+    padding: 0 1;
+}
+
+#breadcrumb .crumb-last {
+    color: $accent;
+    text-style: bold;
+}
+
+#pages {
+    width: 100%;
+    height: 1fr;
+}
+
+#hotkey-bar {
+    width: 100%;
+    height: 1;
+    background: $surface;
+    color: $text-muted;
+    padding: 0 1;
+    layout: horizontal;
+}
+
+.hotkey {
+    width: auto;
+    height: 1;
+    padding: 0 1;
+    color: $text-muted;
+}
+
+.hotkey .hotkey-key {
+    color: $accent;
+    text-style: bold;
+}
+
+.hotkey.-danger .hotkey-key,
+.hotkey.-danger .hotkey-label {
+    color: $hotkey-danger;
+    text-style: bold;
+}
+
+.hotkey.-disabled {
+    color: $text-disabled;
+}
+
+.hotkey.-disabled .hotkey-key {
+    color: $text-disabled;
+}
+
+/* -- generic page / text ------------------------------------------------ */
+
+.stateful-page {
+    width: 100%;
+    height: 100%;
+}
+
+.page-pad {
+    padding: 0 1;
+}
+
+.title {
+    color: $foreground;
+    text-style: bold;
+}
+
+.section-title {
+    color: $accent;
+    text-style: bold;
+}
+
+.muted {
+    color: $text-muted;
+}
+
+.danger {
+    color: $error;
+    text-style: bold;
+}
+
+.ok {
+    color: $success;
+}
+
+.warn {
+    color: $warning;
+}
+
+.kv-row {
+    height: auto;
+    layout: horizontal;
+}
+
+.kv-key {
+    width: 18;
+    color: $text-muted;
+}
+
+.kv-value {
+    width: 1fr;
+    color: $foreground;
+}
+
+#log {
+    height: auto;
+    max-height: 2;
+    padding: 0 1;
+    color: $text-muted;
+}
+
+/* -- dashboard ---------------------------------------------------------- */
+
+#page-dashboard {
+    padding: 0 1;
+    layout: vertical;
+}
+
+#dashboard-cards {
+    height: 1fr;
+    layout: grid;
+    grid-size: 2 2;
+    grid-gutter: 0 1;
+}
+
+.stat-card {
+    height: 100%;
+    border: round $border;
+    background: $surface;
+    padding: 0 1;
+}
+
+.stat-card .card-title {
+    text-style: bold;
+}
+
+.card--server .card-title {
+    color: $card-server;
+}
+
+.card--controllers .card-title {
+    color: $card-controllers;
+}
+
+.card--storage .card-title {
+    color: $card-storage;
+}
+
+.card--health .card-title {
+    color: $card-health;
+}
+
+.stat-card .card-body {
+    color: $foreground;
+    height: auto;
+}
+
+#recent-tasks {
+    height: 6;
+    border-top: solid $border;
+    padding: 0 0;
+}
+
+#recent-tasks .section-title {
+    height: 1;
+}
+
+#recent-tasks-table {
+    height: 1fr;
+}
+
+/* -- controllers -------------------------------------------------------- */
+
+#page-controllers {
+    padding: 0 0;
+    layout: horizontal;
+}
+
+#controller-list {
+    width: 44%;
+    height: 100%;
+}
+
+#controller-summary {
+    width: 56%;
+    height: 100%;
+    padding: 0 1;
+    border-left: solid $border;
+}
+
+#controller-kv {
+    height: auto;
+    color: $foreground;
+}
+
+#controller-caps {
+    height: auto;
+    color: $warning;
+    text-style: bold;
+}
+
+#controller-volumes {
+    height: 1fr;
+}
+
+/* -- physical / virtual: full 80 columns, zero side padding ------------ */
+
+#page-physical,
+#page-virtual {
+    padding: 0;
+    layout: vertical;
+}
+
+.filter-bar {
+    width: 100%;
+    height: 1;
+    layout: horizontal;
+    background: $surface;
+    padding: 0;
+}
+
+.filter-bar Select,
+.filter-bar Input {
+    height: 1;
+    margin: 0;
+    border: none;
+}
+
+#filter-ctrl {
+    width: 13;
+}
+
+#filter-media {
+    width: 11;
+}
+
+#filter-state {
+    width: 12;
+}
+
+#filter-search {
+    width: 1fr;
+    height: 1;
+    margin: 0;
+}
+
+#filter-count {
+    width: 7;
+    height: 1;
+    padding: 0 0 0 1;
+    color: $text-muted;
+}
+
+#physical-table,
+#virtual-table {
+    width: 100%;
+    height: 1fr;
+}
+
+.detail-drawer {
+    width: 100%;
+    height: 5;
+    border-top: solid $border;
+    background: $drawer-bg;
+    padding: 0 1;
+    color: $foreground;
+}
+
+.detail-drawer.-hidden {
+    display: none;
+}
+
+.detail-drawer .drawer-title {
+    color: $accent;
+    text-style: bold;
+}
+
+/* -- tasks -------------------------------------------------------------- */
+
+#page-tasks {
+    padding: 0;
+    layout: horizontal;
+}
+
+#task-queue-pane {
+    width: 50%;
+    height: 100%;
+}
+
+#task-queue {
+    height: 1fr;
+}
+
+#task-summary {
+    height: 3;
+    padding: 0 1;
+    color: $text-muted;
+}
+
+#task-log {
+    width: 50%;
+    height: 100%;
+    border-left: solid $border;
+    background: $background;
+    color: $foreground;
+    padding: 0 1;
+}
+
+/* -- evidence ----------------------------------------------------------- */
+
+#page-evidence {
+    padding: 0;
+    layout: horizontal;
+}
+
+#evidence-sessions {
+    width: 40%;
+    height: 100%;
+}
+
+#evidence-detail {
+    width: 60%;
+    height: 100%;
+    border-left: solid $border;
+    padding: 0 1;
+}
+
+#evidence-tree {
+    height: 1fr;
+}
+
+#report-status {
+    height: 7;
+    border-top: solid $border;
+    padding: 0 1;
+}
+
+#report-status .section-title {
+    height: 1;
+}
+
+#report-status .status-line {
+    height: auto;
+    color: $foreground;
+}
+
+/* -- settings ----------------------------------------------------------- */
+
+#page-settings {
+    padding: 0;
+    layout: horizontal;
+}
+
+#settings-categories {
+    width: 22%;
+    height: 100%;
+    border-right: solid $border;
+}
+
+#settings-form {
+    width: 78%;
+    height: 100%;
+    padding: 0 1;
+    overflow-y: auto;
+}
+
+#settings-form Input {
+    height: 3;
+    margin: 0 0 1 0;
+}
+
+#settings-form .form-actions {
+    height: 3;
+    layout: horizontal;
+}
+
+#settings-form Button {
+    margin: 0 1 0 0;
+    min-width: 12;
+}
+
+/* -- tables ------------------------------------------------------------- */
+
+DataTable {
+    width: 100%;
+    height: 1fr;
+    background: $background;
+    color: $foreground;
+    border: none;
+}
+
+DataTable > .datatable--header {
+    background: $surface;
+    color: $accent;
+    text-style: bold;
+}
+
+DataTable > .datatable--odd-row {
+    background: $table-zebra;
+}
+
+DataTable > .datatable--even-row {
+    background: $background;
+}
+
+DataTable > .datatable--cursor,
+DataTable:focus > .datatable--cursor {
+    background: $accent;
+    color: $background;
+    text-style: bold;
+}
+
+DataTable > .datatable--hover {
+    background: $surface;
+}
+
+DataTable:focus,
+DataTable:focus > .datatable--header,
+DataTable:focus > .datatable--cursor,
+Input:focus,
+Button:focus,
+Select:focus,
+SelectCurrent,
+SelectOverlay,
+OptionList,
+OptionList:focus {
+    background-tint: 0%;
+}
+
+OptionList {
+    background: $background;
+    color: $foreground;
+}
+
+OptionList > .option-list--option-highlighted {
+    background: $surface;
+    color: $accent;
+}
+
+SelectCurrent {
+    background: $surface;
+    color: $foreground;
+}
+
+Select .arrow,
+Select .down-arrow,
+Select .up-arrow {
+    color: $foreground;
+    background: $surface;
+}
+
+/* -- inputs / buttons --------------------------------------------------- */
+
+Input {
+    background: $surface;
+    color: $foreground;
+    border: tall $border;
+    height: 3;
+}
+
+Input:focus {
+    border: tall $accent;
+}
+
+Input > .input--placeholder {
+    color: $text-disabled;
+}
+
+Button {
+    background: $surface;
+    color: $foreground;
+    border: tall $border;
+    min-width: 12;
+    height: 3;
+}
+
+Button:hover {
+    background: $panel;
+    text-style: bold;
+}
+
+Button:focus {
+    background: $panel;
+    color: $accent;
+    text-style: bold reverse;
+}
+
+Button.-error {
+    color: $error;
+}
+
+Button.-primary {
+    color: $accent;
+}
+
+Select {
+    background: $surface;
+    color: $foreground;
+    border: tall $border;
+}
+
+Select:focus {
+    border: tall $accent;
+}
+
+SelectOverlay {
+    background: $surface;
+    border: tall $border;
+}
+
+/* -- pushed screens ----------------------------------------------------- */
+
+.chrome-screen {
+    width: 100%;
+    height: 100%;
+    layout: vertical;
+    background: $background;
+}
+
+#detail-body {
+    height: 1fr;
+    padding: 0 1;
+    overflow-y: auto;
+}
+
+#detail-kv {
+    height: auto;
+    color: $foreground;
+}
+
+#detail-volumes {
+    height: 1fr;
+}
+
+#detail-disks {
+    height: 1fr;
+}
+
+/* -- wizard ------------------------------------------------------------- */
+
+#wizard-steps {
+    width: 100%;
+    height: 1;
+    background: $surface;
+    color: $text-muted;
+    padding: 0 1;
+}
+
+#wizard-steps .step {
+    padding: 0 1;
+}
+
+#wizard-steps .step.-active {
+    background: $nav-active-bg;
+    color: $nav-active-fg;
+    text-style: bold;
+}
+
+#wizard-steps .step.-done {
+    color: $success;
+}
+
+#wizard-pages {
+    width: 100%;
+    height: 1fr;
+}
+
+.wizard-page {
+    width: 100%;
+    height: 100%;
+    padding: 0 1;
+}
+
+.level-grid {
+    height: auto;
+    layout: grid;
+    grid-size: 4 1;
+    grid-gutter: 0 1;
+}
+
+.level-button {
+    height: 3;
+}
+
+#wizard-preview {
+    height: 1fr;
+    overflow-y: auto;
+}
+
+#wizard-preview .preview-section {
+    height: auto;
+    margin: 0 0 1 0;
+}
+
+#wizard-preview .command-list {
+    height: auto;
+    color: $accent;
+}
+
+#wizard-commands {
+    height: 7;
+    border: round $border;
+    padding: 0 1;
+    overflow-y: auto;
+}
+
+/* -- modals ------------------------------------------------------------- */
+
+ConfirmModal,
+CommandPaletteModal,
+HelpScreen {
+    align: center middle;
+}
+
+#confirm-dialog,
+#palette-dialog,
+#help-dialog {
+    width: 94%;
+    height: 92%;
+    border: thick $border;
+    background: $background;
+    padding: 0 1;
+    overflow-y: auto;
+}
+
+#confirm-commands,
+#help-body {
+    height: 1fr;
+    min-height: 5;
+    border: round $border;
+    padding: 0 1;
+    overflow-y: auto;
+}
+
+#confirm-actions,
+#palette-actions {
+    height: 3;
+    layout: horizontal;
+}
+
+#confirm-actions Button,
+#palette-actions Button {
+    margin: 0 1 0 0;
+}
+
+#audit-token {
+    color: $warning;
+    text-style: bold;
+}
+
+#confirm-error {
+    height: 1;
+    color: $error;
+}
+
+#palette-input {
+    height: 3;
+    margin: 0 0 1 0;
+}
+
+#palette-list {
+    height: 1fr;
+}
+
+/* -- compact 80x25 ------------------------------------------------------ */
+
+#app-root.-compact #status-bar {
+    padding: 0;
+}
+
+#app-root.-compact .nav-item {
+    padding: 0;
+}
+
+#app-root.-compact .hotkey {
+    padding: 0;
+}
+
+#app-root.-compact .detail-drawer {
+    height: 5;
+}
+
+#app-root.-compact #recent-tasks {
+    height: 6;
+}
+
+#app-root.-compact .stat-card {
+    padding: 0;
+}
+
+#app-root.-compact #controller-summary {
+    padding: 0;
+}

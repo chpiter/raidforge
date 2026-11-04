@@ -93,11 +93,11 @@ raidforge/
 │   ├── test_report_network.py   任一块网卡拿到 IPv4 即视为网络就绪
 │   ├── test_report_ssh.py       设置页探测：SSH 登录 + 远端目录可写
 │   ├── test_report_http.py      HTTP 端点推导 / healthz 探测 / 传输顺序与兜底
-│   ├── test_settings_screen.py  设置页：只改 IP、保存后探测（需 0.89.1）
+│   ├── test_settings_screen.py  设置页：只改 IP、保存后探测（需 7.5.0）
 │   ├── test_svg_raster.py       Rich SVG → PNG 栅格化（需 Pillow）
 │   ├── test_erase_report.py     DOCX 报告：命名/多轮/状态/manifest/包裹模式（需 docx）
 │   ├── test_report_fidelity.py  QEMU 形状数据：全量磁盘、FW/RAID、命令、manifest 一致性
-│   ├── test_report_live.py      真实驱动两轮擦除后生成报告（需 0.89.1 + docx）
+│   ├── test_report_live.py      真实驱动两轮擦除后生成报告（需 7.5.0 + docx）
 │   ├── test_report_publish_ui.py 每轮结束即时生成/上传，Q 前 DOCX 已存在
 │   ├── test_publish.py          发布锁、manifest 顺序、即时失败不排队、父进程继承
 │   ├── test_dashboard_enter.py  Dashboard 焦点按钮 Enter / 无焦点默认 / R/U/S 回归
@@ -112,7 +112,7 @@ raidforge/
 │   ├── test_raid_eligibility.py 空闲盘资格与 blocked 原因
 │   ├── test_raid_execute.py     RAID 串行执行、失败继续、超时、取消
 │   ├── test_raid_evidence.py    raid_actions.json / manifest @2
-│   ├── test_raid_ui.py          RAID 屏幕与闸门（需 0.89.1）
+│   ├── test_raid_ui.py          RAID 屏幕与闸门（需 7.5.0）
 │   ├── test_detect_aliases.py   storcli64/perccli64/hpssacli 别名
 │   ├── test_rename_guard.py     旧命名残留守卫
 │   ├── ui_smoke.py              无头 UI 冒烟（80×25）
@@ -266,8 +266,8 @@ sudo dd if=raidforge-<version>-<YYYYmmdd>.iso of=/dev/sdX bs=4M status=progress 
 ### Python 依赖为什么走 wheel
 
 Debian bookworm 源里的 `textual` 版本不可控，而 `App.export_screenshot()`、
-`DataTable` 的光标/焦点行为、`run_test()` 的 pilot 语义都与版本相关（0.89.1 与 8.x
-差得很远）。所以 `app/requirements.txt` 写死 `textual==0.89.1`，`build.sh` 会：
+`DataTable` 的光标/焦点行为、`run_test()` 的 pilot 语义都与版本相关（7.5.0 与 8.x
+差得很远）。所以 `app/requirements.txt` 写死 `textual==7.5.0`，`build.sh` 会：
 `pip download --platform manylinux_2_17_x86_64 --platform manylinux_2_28_x86_64 --python-version 3.11 --abi cp311`
 把 wheel 拉到 `vendor/wheels/`，hook 里 `pip install --no-index --find-links` 离线安装，
 保证每次构建出的 ISO 依赖一致，且构建过程可完全离线。
@@ -559,18 +559,24 @@ HTTP 地址解析顺序：显式 `report.http_base_url` 优先；为空时由
 
 ### 6.1 屏幕与按键
 
-| 屏幕 | 内容 | 按键 |
+新界面是单壳七模块：顶部 1 行状态栏 + 3 行水平 Tab（激活项 `border: tab`）+ 1 行面包屑 + 动态内容区 + 1 行热键栏。80×25 下内容区 19 行。页面是常驻 Widget，切换后筛选、光标、滚动位置保留；NavBar 可聚焦，←/→ 移光标、Enter 激活，表格支持 J/K、Home/End、PgUp/PgDn、Space、Ctrl+A、Ctrl+I。
+
+| 页面 / 压栈屏 | 内容 | 按键 |
 |---|---|---|
-| **Dashboard** | SN 与来源、会话、闸门提示、工具与控制器、RAID 控制器/卷数量、HDD/SSD/UNKNOWN 计数、网络状态、优先传输方式、接收端 IP 与 HTTP 端点、最近一次报告/上传状态 | `Enter` 激活当前焦点按钮（无焦点时进磁盘列表）· `C` RAID 管理 · `Tab` 切换焦点 · `S` 设置页 · `R` 重扫 · `U` 重刷待传 · `Q` 退出 |
-| **Settings** | 只读的 SSH 身份（user/remote root）+ 可选 SSH/HTTP 优先通道 + 接收端 IPv4 与端口（SSH 默认 22，HTTP 默认 8080）+ 当前 HTTP 端点；保存后只探测选中通道 | 点 `[X] SSH` / `[ ] HTTP` 切换，端口随模式切换 · 输入 IP/端口后 `Enter` 保存 · 成功显示 `reachable`，失败显示 `saved, but <SSH|HTTP> check failed ... will try <另一种>, then queue locally`（配置保留） · `Esc` 返回 · `Q` 退出 |
-| **Controllers** | 每个探测到的阵列卡：控制器号、工具、型号、固件、VD 数、PD 数、能力（C/D/X） | `Enter` 详情 · `R` 重扫 · `E` 进入磁盘擦除 · `Esc` 返回 · `Q` 退出 |
-| **ControllerDetail** | 控制器详情、VD 表（级别/名称/状态/容量/成员）、物理盘表（位置/介质/容量/状态/VD 或 free/blocked） | `C` 新建 RAID · `D` 删除光标所在 VD · `X` 清除控制器配置 · `E` 擦除磁盘 · `R` 重扫 · `Tab` 切换表 · `Esc` 返回 |
-| **CreateRAID** | 级别、RAID0 模式、可选名称、可选空闲盘、span 预览、容量估算、warnings | `0/1/5/T` 选级别（T=RAID10）· `G` 切换 RAID0 单卷/一盘一卷 · `Space` 勾选 · `A` 全选空闲盘 · `N` 清空 · `Enter` 确认 · `Esc` 返回 |
-| **RaidConfirmModal** | 逐条 RAID 干跑命令、成员/容量/警告 | 输入 `yes`（创建/删除 VD）或控制器号（如 `c0`，清配置）后 `Enter`；`Esc` 取消 |
-| **DiskList** | 全量磁盘表，首列 `>` 是行光标，Sel/ID/位置/介质/协议/型号/序列号/容量/状态 | `↑`/`↓` 移动光标（`PgUp/PgDn/Home/End` 也可）· `Space` 勾选光标所在行 · `A` 全选可选盘 · `N` 清空 · `Enter` 擦除 · `Esc` 返回 |
-| **ConfirmModal** | 逐条**干跑擦除命令**（shell 转义后逐字符即为真实 argv）、目标盘摘要、确认输入框 | 输入 `yes` 后 `Enter` 或点 Execute；`Esc` 取消 |
-| **Progress** | 逐条擦除提交结果：磁盘/方法/状态/返回码/耗时 | `Esc` 返回 · `Q` 停止提交（运行中）/ 退出应用（已结束） |
-| **RaidProgress** | 逐条 RAID 命令结果 + 执行后重扫观察（confirmed / not_visible / mismatch） | `Esc` 返回 · `Q` 停止后续提交（运行中）/ 退出应用（已结束） |
+| **Dashboard** | 2×2 卡片（Server / Controllers / Storage / Health）+ Recent Tasks | `Ctrl+1` · `Enter` 打开任务 · `F5` 刷新 · `Ctrl+P` 命令面板 |
+| **Controllers** | 左侧控制器列表 + 右侧摘要/VD；`Enter` 压入详情 | `Ctrl+2` · `Enter` 详情 · `F7` 建卷 · `F5` 刷新 |
+| **Physical** | 筛选条 + 80 列满宽多选表 + 选中行底部抽屉；VD 成员/UNKNOWN/blocked 灰显不可选 | `Ctrl+3` · `Space` 勾选 · `A` 全选 · `N` 清空 · `/` 搜索 · `F8` 擦除（红） |
+| **Virtual** | 同构满宽布局；`Enter` 压入成员盘 | `Ctrl+4` · `Enter` 成员 · `F7` 建卷（红）· `F9` 删卷（红） |
+| **Tasks** | 串行任务队列 + RichLog 实时日志 | `Ctrl+5` · `C` 取消 · `F5` 刷新 |
+| **Evidence** | 会话列表 + 文件树 + 报告/上传状态 | `Ctrl+6` · `R` 重扫 · `F5` 刷新 |
+| **Settings** | 左分类 + 右表单（连接/上报/证据/外观/关于） | `Ctrl+7` · `Enter` 保存 · `Tab` 字段 |
+| **ControllerDetail**（压栈） | 控制器 KV、VD 表、物理盘表 | `F7` 建卷 · `F9` 删卷 · `F10` 清配置（红）· `F5` · `Esc` |
+| **RAID 向导**（压栈） | ①级别 ②选盘 ③预览（span/容量/warnings/命令序列）④ConfirmModal | `0/1/5/T` 级别 · `Space` 选盘 · `Enter` 下一步 · `Esc` 返回 |
+| **VolumeMembers**（压栈） | VD 成员盘详情 | `Esc` 返回 |
+| **ConfirmModal** | 目标摘要、逐条 dry-run 命令、确认输入 | 擦除/建卷/删卷/清配置统一输入 `yes`；`Tab` 切换输入/按钮，`Esc` 取消 |
+| **命令面板 / 帮助** | `Ctrl+P` 模糊过滤命令；`F1` 上下文帮助 | `Up/Down` · `Enter` · `Esc` |
+
+全局键：`Ctrl+1..7` 直达页面，`Ctrl+Q` 退出（运行中任务第一次只取消），`Ctrl+P` 命令面板，`F1` 帮助，`F5` 全量刷新，`Esc` 逐层返回。
 
 > 磁盘表进屏即获得键盘焦点，不用先按 `Tab`；`Tab` 只是把焦点从别处移回表格。
 > 光标是**首列的 `>` 文本标记**（不是背景色块）。16 色控制台上 Textual 的行高亮
@@ -581,29 +587,40 @@ HTTP 地址解析顺序：显式 `report.http_base_url` 优先；为空时由
 > 擦除**已结束**后按 `Q` 直接退出应用——不会再出现卡在 cancelling 假状态的问题
 > （回归测试：`tests/test_quit_path.py`）。
 
-### 6.1.1 为什么只用纯黑白（重要）
+### 6.1.1 双主题与 16 色回退（重要）
 
-镜像跑在**裸 Linux 控制台**上，只有 16 色 ANSI 调色板，没有 256 色/真彩。品牌色会在这里被降级：
+默认主题是方案 7.2 的深蓝配色：背景 `#002B49`、高亮 `#4FC3F7`、危险 `#FF5252`，
+当前顶部 Tab 背景 `#0066A1`。但镜像可能跑在**裸 Linux 控制台**上，只有 16 色 ANSI
+调色板；`#002B49` 在那里会被量化成 `SGR 90` bright black，部分 VGA/fbcon 会把它画成
+“什么都没有”。
 
-| 设计色 | 落到 16 色 | 结果 |
-|---|---|---|
-| `#002B49`（深藏青） | `SGR 90` bright black | **VGA/fbcon 在彩色底上直接画不出来** —— 表头变成一条纯青色空条，文字全丢 |
-| `#4CC2FF` / `#53C3FD` | `SGR 96` bright cyan | 正常 |
-| `#000000` / `#FFFFFF` | `SGR 30` / `SGR 47` | 永远正确 |
+因此 `ui.palette.select_theme_name()` 做**自动回退**：
 
-所以 `UiConfig` 默认改成 **黑底白字**（`#000000` / `#FFFFFF`），表头文字固定 `#000000`，
-光标行白底黑字。**不要在深色背景上用"接近黑"的品牌色作前景**，这是这台设备上最容易被
-忽略的显示故障——文字在开发机的 256 色终端里一切正常，只有上机才看得见。
+| 条件 | 主题 |
+|---|---|
+| `TERM=linux` / `fb*` 或 `RAIDFORGE_MONO=1` | `raidforge-mono`（纯 `#000000` / `#FFFFFF`） |
+| 其它彩色终端 | `raidforge`（7.2 深蓝） |
+| `RAIDFORGE_THEME=blue` / `mono` | 强制指定 |
+| Settings → Appearance | 本次会话手动切换 |
+
+TCSS 只引用主题变量（`$background`/`$accent`/`$error`/`$nav-active-bg`/`$table-zebra` 等），
+两套主题共用同一份布局。`tests/test_mono_live.py` 在 `TERM=linux` 等价的 mono 主题下
+检查实际渲染段只有纯黑/纯白；`tests/test_mono_static.py` 检查 TCSS 不写死颜色。
 
 ### 6.1.2 RAID 管理（屏幕与流程）
 
 ```
-Dashboard --C--> Controllers --Enter--> ControllerDetail
-                                              |-- C --> CreateRAID --> RaidConfirm(yes) --> RaidProgress --> 重扫
-                                              |-- D --> RaidConfirm(yes) ------------------> RaidProgress --> 重扫
-                                              |-- X --> RaidConfirm(c0) -------------------> RaidProgress --> 重扫
-                                              |-- E --> DiskList（原擦除流程，完全不变）
-                                              '-- R --> 重扫并刷新 VD/PD
+顶部 Tab: Dashboard / Controllers / Physical / Virtual / Tasks / Evidence / Settings
+
+Controllers --Enter--> ControllerDetail
+                          |-- F7 --> RAID 向导（4 步）--> ConfirmModal(yes) --> Tasks --> 定向刷新
+                          |-- F9 --> ConfirmModal(yes) -----------------------> Tasks --> 定向刷新
+                          |-- F10 -> ConfirmModal(c0) ------------------------> Tasks --> 定向刷新
+                          '-- F5 --> 只刷新该控制器
+
+Physical --Space 选盘--> F8 --> ConfirmModal(yes) --> Tasks（擦除 + 报告）--> 只刷新相关盘
+Virtual  --Enter--> 成员盘；F7 建卷；F9 删卷
+Tasks    --Enter--> 实时日志；C 取消
 ```
 
 **支持的级别与规则**
@@ -647,14 +664,13 @@ UI 不会把“已接受”写成“已完成”。
 2. **必须先过 ConfirmModal**，屏幕上逐条列出将要执行的命令原文。
 3. **必须手工敲入 `yes`**（不分大小写）才能解锁；敲别的只提示不执行，且输入框会被清空，
    避免"再补一个字符就变成合法值"。
-4. **RAID 写操作有独立闸门**：创建 RAID / 删除 VD 输入 `yes`；清除整个控制器配置必须
-   输入控制器号（如 `c0`），不能用 `yes` 蒙混过关。RAID 闸门同样逐条展示 dry-run argv。
+4. **RAID 写操作有独立闸门**：创建 RAID / 删除 VD / 清除控制器配置统一输入 `yes`；
+   闸门同样逐条展示 dry-run argv。
 5. 想先看看会执行什么而不动盘：`raidforge --dry-run --print-plan`
    （擦除计划）或 `raidforge --print-raid-plan`（控制器/VD/空闲盘/能力，纯只读）。
 
-> 早期版本要求逐字敲入 `CONFIRM-{server_sn}`（VMware/派生 SN 下长达 40+ 字符），
-> 控制台键盘上输入成本过高且极易打错，已改为短确认词。`server_id.confirm_token`
-> 仍写进 `manifest.json` 作为审计标识，但不再作为输入闸门。
+> 所有破坏性操作统一使用短确认词 `yes`（大小写不敏感）。`server_id.confirm_token`
+> 仍写进 `manifest.json` / `events.jsonl` 作为审计元数据，但不再作为输入闸门。
 
 ### 6.3 完成语义（重要）
 
@@ -687,7 +703,7 @@ ssacli ctrl slot=0 pd all show status     # HPE
 
 派生 SN 时 Dashboard 会用粗体 `!! WARNING` 告警（界面只有黑白两色，没有"红字"），
 `manifest.json` 里的 `confirm_token` 随之变成 `CONFIRM-UNKxxxxxxxxxxxx`
-（仅作审计标识，输入闸门固定是 `yes`）。
+（仅作审计元数据，输入闸门固定是 `yes`）。
 
 ### 6.5 证据（约束 9）
 
@@ -869,14 +885,14 @@ NVMe 时用 `sanitize`，其余一律 `blockerase` —— 不猜。
 ## 8. 测试
 
 ```bash
-pytest tests -q                      # 跨平台全量；装齐依赖并使用 0.89.1 时全绿
+pytest tests -q                      # 跨平台全量；装齐依赖并使用 7.5.0 时全绿
 ./tools/check.sh                     # L0：bash -n + pytest + 探测链 mock + 80×25 UI 冒烟（~30s）
 tests/test_detection.sh --mock       # Linux/WSL/macOS：用伪造 CLI 跑真实进程链
 tests/test_detection.sh --real       # 在真机上打印它构造出的命令（不执行任何东西）
 raidforge --print-raid-plan          # 只读：控制器/VD/成员/空闲盘/能力
 ```
 
-镜像固定 Textual **0.89.1**（`app/requirements.txt`）。有 20 项测试直接驱动真实渲染
+镜像固定 Textual **7.5.0**（`app/requirements.txt`）。有 20 项测试直接驱动真实渲染
 （`test_mono_live.py`、`test_quit_path.py`、`test_settings_screen.py`、
 `test_report_live.py`），在其它 Textual 版本上会自动 skip 并打印原因；
 `test_launcher_menu.py` 需要 POSIX pty，Windows 上整模块 skip。
@@ -884,7 +900,7 @@ DOCX 与截图相关测试（`test_svg_raster.py`、`test_erase_report.py`、`te
 需要 Pillow / python-docx，缺依赖时整模块 skip 而不是假通过。
 
 开发机（Windows + Textual 8.x、未装 python-docx/Pillow）会看到一部分 UI/DOCX
-测试被 skip；装齐依赖并使用 0.89.1 后应在构建主机或 `/root/tv` 里全绿。`tools/check.sh` 只会挑版本匹配的解释器做 UI 检查，不匹配时明确
+测试被 skip；装齐依赖并使用 7.5.0 后应在构建主机或 `/root/tv` 里全绿。`tools/check.sh` 只会挑版本匹配的解释器做 UI 检查，不匹配时明确
 警告而不是给出误导性失败。
 
 `test_detection.sh` 覆盖八种情形：storcli 胜出 / 降级到 arcconf / 降级到 ssacli /

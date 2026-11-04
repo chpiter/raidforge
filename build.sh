@@ -186,8 +186,11 @@ stage_sources() {
 
 vendor_wheels() {
     mkdir -p "$VENDOR_DIR"
-    if [[ -z "$(ls -A "$VENDOR_DIR" 2>/dev/null)" ]]; then
-        log "downloading python wheels (Debian 12 ships Python 3.11)"
+    local textual_pin
+    textual_pin="$(awk -F'==' '/^textual==/{print $2; exit}' app/requirements.txt)"
+    if [[ -z "$(ls -A "$VENDOR_DIR" 2>/dev/null)" ]] || ! compgen -G "${VENDOR_DIR}/textual-${textual_pin}-*.whl" >/dev/null; then
+        log "downloading python wheels for textual ${textual_pin} (Debian 12 ships Python 3.11)"
+        rm -f "${VENDOR_DIR}"/textual-*.whl
         python3 -m pip download \
             -r app/requirements.txt \
             -d "$VENDOR_DIR" \
@@ -199,7 +202,7 @@ vendor_wheels() {
             --abi cp311 \
             || die "wheel download failed; check network access or run with --no-vendor"
     else
-        log "reusing existing wheels in ${VENDOR_DIR}"
+        log "reusing existing wheels in ${VENDOR_DIR} (textual ${textual_pin})"
     fi
 }
 

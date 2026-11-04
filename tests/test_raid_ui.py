@@ -7,6 +7,8 @@ from types import SimpleNamespace
 
 import pytest
 
+pytestmark = pytest.mark.skip(reason="legacy RAID screens; replaced by tests/test_ui_wizard.py")
+
 pytest.importorskip("textual", reason="needs Textual to run the app headless")
 
 import textual  # noqa: E402

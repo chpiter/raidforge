@@ -1,285 +1,295 @@
-"""One controller: details, virtual drives, physical drives and RAID actions."""
+"""Pushed controller detail screen: KV, virtual drives and physical disks."""
 
 from __future__ import annotations
 
-from typing import List, Optional
-
 from textual.app import ComposeResult
-from textual.containers import Container
-from textual.widgets import Label, Static
+from textual.binding import Binding
+from textual.containers import Vertical
+from textual.screen import Screen
+from textual.widgets import DataTable, Static
 
-from ...core.models import ControllerInfo, RaidCommandPlan, Vendor
-from ...core.raid import provider_for
-from ..scan import run_scan
-from ..state import AppContext
-from ..widgets import KeyBar, SessionStatusBar
-from ..widgets.raid_tables import RaidDiskTable, VolumeTable
-from .base import BaseScreen
-from .raid_confirm import RaidConfirmModal
-from .raid_progress import RaidProgressScreen
-
-SCREEN_NAME = "Controller"
+from ...core.models import RaidAction
+from ..focus import capture_focus
+from ..models import ConfirmRequest, HotkeyHint, RefreshScope, TaskKind
+from ..state import AppState
+from ..tasks import make_task, raid_job, refresh_job
+from ..widgets.breadcrumb import Breadcrumb
+from ..widgets.disk_table import MultiSelectTable
+from ..widgets.hotkey_bar import HotkeyBar
+from ..widgets.tables import VolumeTable
 
 
-class ControllerDetailScreen(BaseScreen):
-    """Read-only topology plus the three RAID write entry points."""
-
-    SCREEN_NAME = SCREEN_NAME
-    HINTS = [
-        ("C", "create RAID"),
-        ("D", "delete VD"),
-        ("X", "clear config"),
-        ("E", "erase disks"),
-        ("R", "rescan"),
-        ("Tab", "switch table"),
-        ("Esc", "back"),
-        ("Q", "quit"),
+class ControllerDetailScreen(Screen):
+    BINDINGS = [
+        Binding("escape", "back", "Back", show=False),
+        Binding("f5", "refresh", "Refresh", show=False),
+        Binding("f7", "create", "Create", show=False),
+        Binding("f9", "delete_volume", "Delete VD", show=False),
+        Binding("f10", "clear_config", "Clear config", show=False),
     ]
 
-    def __init__(self, ctx: AppContext, controller_index: int) -> None:
-        super().__init__(ctx)
+    def __init__(self, state: AppState, controller_index: int) -> None:
+        super().__init__()
+        self.state = state
         self.controller_index = controller_index
-        self._info = Static("", classes="muted")
-        self._volumes = VolumeTable(id="volume-table")
-        self._disks = RaidDiskTable(id="pd-table")
-        self._scanning = False
 
     def compose(self) -> ComposeResult:
-        yield SessionStatusBar(self.ctx, SCREEN_NAME)
-        with Container(id="content"):
-            yield Label(f"[b]Controller c{self.controller_index}[/b]", classes="title")
-            yield self._info
-            yield Label("[b]Virtual drives[/b]")
-            yield self._volumes
-            yield Label("[b]Physical drives[/b]")
-            yield self._disks
-            yield self.status_line()
-        yield KeyBar(self.HINTS)
+        with Vertical(classes="chrome-screen"):
+            yield Breadcrumb("", id="detail-breadcrumb")
+            with Vertical(id="detail-body"):
+                yield Static("", id="detail-kv")
+                yield VolumeTable(id="detail-volumes")
+                yield MultiSelectTable(
+                    id="detail-disks",
+                    row_allowed=lambda disk: (True, ""),
+                    vd_for=self._vd_label,
+                )
+            yield HotkeyBar("", id="detail-hotkeys")
 
     def on_mount(self) -> None:
+        self._focus = capture_focus()
+        self.state.push_breadcrumb(f"c{self.controller_index}")
         self._load()
-        self._volumes.focus()
-        self.schedule_snapshot("02b-controller-detail")
+        try:
+            self.query_one(VolumeTable).focus()
+        except Exception:  # pragma: no cover
+            pass
+        self.state.evidence.emit("ui_controller_detail", controller_index=self.controller_index)
+        self._snapshot("11b-controller-detail")
 
-    def on_screen_resume(self) -> None:
-        self._load()
+    def on_unmount(self) -> None:
+        self._focus.restore()
+        self.state.pop_breadcrumb()
+
+    def on_data_refreshed(self, message) -> None:
+        if message.scope in (RefreshScope.ALL, RefreshScope.CONTROLLER, RefreshScope.DISKS):
+            self._load()
 
     # -- data ---------------------------------------------------------------
-    def _controller(self) -> ControllerInfo:
-        existing = self.ctx.controller_by_index(self.controller_index)
-        if existing is not None:
-            return existing
-        topology = self.ctx.raid_topology(self.controller_index)
-        if topology is not None:
-            vendor = topology.vendor
-        elif self.ctx.detection is not None:
-            vendor = self.ctx.detection.vendor
-        else:
-            vendor = Vendor.GENERIC
+    def _controller(self):
+        controller = self.state.controller_by_index(self.controller_index)
+        if controller is not None:
+            return controller
+        from ...core.models import ControllerInfo, Vendor
+
+        topology = self.state.raid_topology(self.controller_index)
         return ControllerInfo(
             index=self.controller_index,
-            vendor=vendor,
+            vendor=topology.vendor if topology else Vendor.GENERIC,
             tool=topology.tool if topology else "",
             binary=topology.binary if topology else "",
         )
 
     def _load(self) -> None:
         controller = self._controller()
-        topology = self.ctx.raid_topology(self.controller_index)
-        caps = self.ctx.raid_capabilities(self.controller_index)
-        lines: List[str] = [
+        topology = self.state.raid_topology(self.controller_index)
+        caps = self.state.raid_capabilities(self.controller_index)
+        lines = [
             f"Vendor   : {controller.vendor.label}",
             f"Tool     : {controller.tool or '-'} ({controller.binary or '-'})",
             f"Model    : {controller.model or '-'}",
             f"Firmware : {controller.firmware or '-'}",
             f"Serial   : {controller.serial or '-'}",
-            "Actions  : "
-            + " ".join(
-                [
-                    "create=yes" if caps.create else "create=no",
-                    "delete=yes" if caps.delete_vd else "delete=no",
-                    "clear=yes" if caps.clear_config else "clear=no",
-                ]
-            ),
+            f"Actions  : create={'yes' if caps.create else 'no'}  "
+            f"delete={'yes' if caps.delete_vd else 'no'}  clear={'yes' if caps.clear_config else 'no'}",
         ]
-        for key, value in list(controller.details.items())[:8]:
-            lines.append(f"{key:<16}: {value}")
         if topology is None:
-            lines.append("Topology : not collected yet - press R to rescan")
+            lines.append("Topology : not collected - press F5")
         elif topology.error:
             lines.append(f"Topology : ERROR {topology.error}")
         else:
             lines.append(
-                f"Topology : {len(topology.volumes)} volume(s), "
-                f"{len(topology.free_disk_ids)} free disk(s), {len(topology.blocked)} blocked"
+                f"Topology : {len(topology.volumes)} VD / {len(topology.free_disk_ids)} free / "
+                f"{len(topology.blocked)} blocked"
             )
-        self._info.update("\n".join(lines))
+        self.query_one("#detail-kv", Static).update("\n".join(lines))
+        views = [view for view in self.state.virtual_disks if view.controller_index == self.controller_index]
+        self.query_one(VolumeTable).load(views, self.state.virtual_cursor)
+        disks = self.state.controller_disks(self.controller_index)
+        self.query_one(MultiSelectTable).set_layout_mode(self.state.layout_mode)
+        self.query_one(MultiSelectTable).load_disks(disks, set(), self.state.physical_cursor)
+        self._chrome()
 
-        volumes = topology.volumes if topology else []
-        self._volumes.load_volumes(volumes)
-        disks = self.ctx.controller_disks(self.controller_index)
-        membership = topology.membership if topology else {}
-        free = topology.free_disk_ids if topology else []
-        blocked = topology.blocked if topology else {}
-        self._disks.load_disks(disks, membership, free, blocked)
-        self.set_message(
-            f"c{self.controller_index}: {len(volumes)} VD(s), {len(free)} free disk(s) - "
-            "C create, D delete VD, X clear config, E erase disks"
-        )
+    def _vd_label(self, disk) -> str:
+        membership = self.state.disk_membership().get(disk.disk_id)
+        if membership:
+            return membership
+        return "blocked" if self.state.blocked_reason(disk) else "free"
 
-    def _provider(self):
-        if self.ctx.detection is None:
-            self.set_message("no detection result - press R to rescan")
-            return None
-        return provider_for(self.ctx.detection)
+    def _selected_view(self):
+        cursor = self.state.virtual_cursor
+        if cursor:
+            for view in self.state.virtual_disks:
+                if view.key == cursor and view.controller_index == self.controller_index:
+                    return view
+        for view in self.state.virtual_disks:
+            if view.controller_index == self.controller_index:
+                return view
+        return None
 
-    # -- actions ------------------------------------------------------------
-    def _open_confirm(
-        self,
-        plans: List[RaidCommandPlan],
-        title: str,
-        ack_word: str,
-        extra_lines: Optional[List[str]] = None,
-    ) -> None:
-        if not plans:
-            self.set_message("nothing to do")
+    def _chrome(self) -> None:
+        try:
+            self.query_one(Breadcrumb).update_items(self.state.breadcrumb_items())
+            hints = [
+                HotkeyHint("F7", "create", danger=True),
+                HotkeyHint("F9", "delete", danger=True, enabled=self._selected_view() is not None),
+                HotkeyHint(
+                    "F10",
+                    "clear cfg",
+                    danger=True,
+                    enabled=self.state.raid_capabilities(self.controller_index).clear_config,
+                ),
+                HotkeyHint("F5", "refresh"),
+                HotkeyHint("Esc", "back"),
+                HotkeyHint("Ctrl+Q", "quit"),
+            ]
+            self.query_one(HotkeyBar).update_hints(hints, self.app.theme)
+        except Exception:  # pragma: no cover - initial compose
+            pass
+
+    # -- events -------------------------------------------------------------
+    def on_data_table_row_highlighted(self, event: DataTable.RowHighlighted) -> None:
+        if event.data_table.id == "detail-volumes":
+            self.state.virtual_cursor = str(event.row_key.value)
+            self._chrome()
+
+    def action_back(self) -> None:
+        self.app.pop_screen()
+
+    def action_refresh(self) -> None:
+        runner = self.state.task_runner
+        services = self.state.services
+        if runner is None or services is None:
             return
-        self.ctx.raid_epoch += 1
-        epoch = self.ctx.raid_epoch
-        action = plans[0].action
-        controller_index = self.controller_index
-
-        def _after(approved: bool) -> None:
-            if not approved:
-                self.set_message("RAID action cancelled")
-                return
-            self.app.push_screen(
-                RaidProgressScreen(
-                    self.ctx,
-                    plans,
-                    action,
-                    controller_index,
-                    epoch,
-                )
-            )
-
-        self.app.push_screen(
-            RaidConfirmModal(
-                self.ctx,
-                plans,
-                title,
-                ack_word,
-                extra_lines=extra_lines,
-                epoch=epoch,
-            ),
-            _after,
+        task = make_task(
+            TaskKind.REFRESH,
+            f"Refresh c{self.controller_index}",
+            controller_index=self.controller_index,
+        )
+        runner.submit(  # type: ignore[union-attr]
+            task,
+            refresh_job(services, RefreshScope.CONTROLLER, self.controller_index),
         )
 
-    def _create(self) -> None:
-        caps = self.ctx.raid_capabilities(self.controller_index)
+    def action_create(self) -> None:
+        caps = self.state.raid_capabilities(self.controller_index)
         if not caps.create:
-            self.set_message("RAID creation is not available for this controller")
+            self.state.last_message = "RAID creation is not available"
             return
-        from .raid_create import RaidCreateScreen
+        from .raid_wizard import RaidWizardScreen
 
-        self.app.push_screen(RaidCreateScreen(self.ctx, self.controller_index))
+        self.app.push_screen(RaidWizardScreen(self.state, self.controller_index), self._after_wizard)
 
-    def _delete(self) -> None:
-        volume = self._volumes.current_volume
-        if volume is None:
-            self.set_message("no virtual drive under the cursor")
-            return
-        provider = self._provider()
-        if provider is None:
-            return
-        controller = self._controller()
-        try:
-            plans = provider.delete_plans(controller, [volume])
-        except ValueError as exc:
-            self.set_message(f"cannot build delete command: {exc}")
-            return
-        self._open_confirm(
-            plans,
-            f"Delete virtual drive {volume.volume_id} on c{self.controller_index}",
-            "yes",
-            [
-                f"VD {volume.volume_id} {volume.level_label} {volume.state or '-'} {volume.size_human}",
-                f"Members: {volume.members_label}",
-                "The member disks become free after the VD is deleted.",
-            ],
-        )
-
-    def _clear(self) -> None:
-        caps = self.ctx.raid_capabilities(self.controller_index)
-        if not caps.clear_config or not self.ctx.cfg.raid.allow_clear_config:
-            self.set_message("clearing the controller configuration is disabled")
-            return
-        provider = self._provider()
-        if provider is None:
-            return
-        controller = self._controller()
-        try:
-            plans = provider.clear_plans(controller)
-        except ValueError as exc:
-            self.set_message(f"cannot build clear commands: {exc}")
-            return
-        self._open_confirm(
-            plans,
-            f"Clear ALL RAID configuration on c{self.controller_index}",
-            controller.controller_id,
-            [
-                "This deletes every virtual drive and clears foreign/stale RAID metadata.",
-                "Every disk behind this controller becomes unconfigured.",
-                "The acknowledgement word is the controller id, not 'yes'.",
-            ],
-        )
-
-    def _rescan(self) -> None:
-        if self._scanning:
-            return
-        self._scanning = True
-        self.set_message("rescanning controller and RAID topology...")
-
-        def _worker() -> None:
-            try:
-                run_scan(self.ctx)
-            except Exception as exc:  # pragma: no cover - UI must survive scan errors
-                self.app.call_ui(lambda: self.set_message(f"scan failed: {exc}"))
-            finally:
-                self.app.call_ui(self._after_rescan)
-
-        self.ctx.spawn(_worker, name="raid-detail-rescan")
-
-    def _after_rescan(self) -> None:
-        self._scanning = False
+    def _after_wizard(self, _result=None) -> None:
         self._load()
-        self.refresh()
 
-    def _go_disks(self) -> None:
-        from .disk_list import DiskListScreen
+    def action_delete_volume(self) -> None:
+        view = self._selected_view()
+        if view is None:
+            self.state.last_message = "no virtual drive selected"
+            return
+        services = self.state.services
+        try:
+            plans = services.plan_delete(self.controller_index, view.volume_id)  # type: ignore[union-attr]
+        except Exception as exc:
+            self.state.last_message = f"cannot build delete plan: {exc}"
+            return
+        epoch = self.state.raid_epoch + 1
+        self.state.raid_epoch = epoch
+        request = ConfirmRequest(
+            title=f"Delete virtual drive {view.volume_id} on c{self.controller_index}",
+            action="delete",
+            ack_word="yes",
+            ack_label="yes",
+            audit_token=self.state.audit_token(),
+            commands=[plan.dry_run_text for plan in plans],
+            summary=[f"VD {view.volume_id}  {view.level_label}  {view.state}  {view.size_human}"],
+            warnings=["IRREVERSIBLE: member data becomes inaccessible immediately."],
+            danger=True,
+            epoch=epoch,
+            snapshot_name="04-raid-confirm",
+            event_prefix="raid_confirm",
+        )
 
-        self.app.push_screen(DiskListScreen(self.ctx))
+        def after(approved: bool) -> None:
+            if approved:
+                task = make_task(
+                    TaskKind.RAID_DELETE,
+                    f"Delete {view.volume_id}",
+                    controller_index=self.controller_index,
+                    volume_id=view.volume_id,
+                    epoch=epoch,
+                )
+                self.state.task_runner.submit(  # type: ignore[union-attr]
+                    task,
+                    raid_job(services, plans, RaidAction.DELETE_VD, self.controller_index, epoch),
+                )
+                self.state.last_message = f"delete queued as {task.id}"
 
-    # -- input --------------------------------------------------------------
-    def on_key(self, event) -> None:
-        key = getattr(event, "key", "")
-        if key == "c":
-            event.stop()
-            self._create()
-        elif key == "d":
-            event.stop()
-            self._delete()
-        elif key == "x":
-            event.stop()
-            self._clear()
-        elif key == "r":
-            event.stop()
-            self._rescan()
-        elif key == "e":
-            event.stop()
-            self._go_disks()
-        elif key == "escape":
-            self.app.pop_screen()
+        from .confirm import ConfirmModal
+
+        self.app.push_screen(ConfirmModal(self.state, request), after)
+
+    def action_clear_config(self) -> None:
+        caps = self.state.raid_capabilities(self.controller_index)
+        if not caps.clear_config or not self.state.cfg.raid.allow_clear_config:
+            self.state.last_message = "clearing the controller configuration is disabled"
+            return
+        services = self.state.services
+        try:
+            plans = services.plan_clear(self.controller_index)  # type: ignore[union-attr]
+        except Exception as exc:
+            self.state.last_message = f"cannot build clear plan: {exc}"
+            return
+        epoch = self.state.raid_epoch + 1
+        self.state.raid_epoch = epoch
+        request = ConfirmRequest(
+            title=f"Clear ALL RAID configuration on c{self.controller_index}",
+            action="clear",
+            ack_word="yes",
+            ack_label="yes",
+            audit_token=self.state.audit_token(),
+            commands=[plan.dry_run_text for plan in plans],
+            summary=[
+                "Deletes every virtual drive and clears foreign/stale RAID metadata.",
+                "Every disk behind this controller becomes unconfigured.",
+            ],
+            warnings=["IRREVERSIBLE: type yes to clear every virtual drive and foreign metadata."],
+            danger=True,
+            epoch=epoch,
+            snapshot_name="04-raid-confirm",
+            event_prefix="raid_confirm",
+        )
+
+        def after(approved: bool) -> None:
+            if approved:
+                task = make_task(
+                    TaskKind.RAID_CLEAR,
+                    f"Clear config c{self.controller_index}",
+                    controller_index=self.controller_index,
+                    epoch=epoch,
+                )
+                self.state.task_runner.submit(  # type: ignore[union-attr]
+                    task,
+                    raid_job(services, plans, RaidAction.CLEAR_CONFIG, self.controller_index, epoch),
+                )
+                self.state.last_message = f"clear queued as {task.id}"
+
+        from .confirm import ConfirmModal
+
+        self.app.push_screen(ConfirmModal(self.state, request), after)
+
+    def _snapshot(self, name: str) -> None:
+        if not self.state.cfg.evidence.snapshot_on_screen_change:
+            return
+
+        async def _capture() -> None:
+            try:
+                await self.app.take_snapshot(name)  # type: ignore[attr-defined]
+            except Exception:  # pragma: no cover
+                pass
+
+        self.run_worker(_capture, name=f"snapshot-{name}")
 
 
 __all__ = ["ControllerDetailScreen"]

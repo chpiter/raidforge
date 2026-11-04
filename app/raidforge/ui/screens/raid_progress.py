@@ -245,7 +245,7 @@ class RaidProgressScreen(BaseScreen):
             self.ctx.evidence.emit("raid_cancel_requested", action=self.action.value)
             self.request_cancel()
             return
-        self.app.action_quit_app()
+        self.app.exit()
 
     def on_key(self, event) -> None:
         if getattr(event, "key", "") != "escape":
