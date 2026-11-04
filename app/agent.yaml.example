@@ -1,0 +1,28 @@
+# RAIDFORGE Agent 配置示例。
+#
+# 运行时优先级：进程环境变量 RF_AGENT_* > /run/raidforge/agent.env >
+# /etc/raidforge/agent.yaml > 内置默认值。
+#
+# 禁止在此文件写入 token、私钥或注册码；token 只能运行时注入：
+#   - 带标签 RAIDFORGE-CFG 的 U 盘 agent.env
+#   - 内核参数 rf.token=...
+#   - /run/raidforge/agent.env（tmpfs，0600）
+
+server_url: "https://control-plane.internal"
+api_prefix: "/api/raidforge"
+ca_bundle: ""                 # 自签证书时填写 PEM 路径
+poll_mode: "short"            # v1 只支持 short
+heartbeat_interval: 10
+poll_interval_short: 3
+poll_jitter_ms: 500
+confirm_timeout_seconds: 300  # 60..600
+confirm_policy: "server"      # server | always
+evidence_dir: "/var/lib/raidforge/evidence"
+state_dir: "/var/lib/raidforge/agent"
+log_dir: "/var/log/raidforge-agent"
+operator:
+  name: ""                    # 确认屏默认运维者
+server_sn_override: ""        # 仅探测失败时使用
+report_local_summary: false
+allow_insecure_http: false    # 仅回环地址允许 http
+verify_tls: true

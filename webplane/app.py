@@ -1,184 +1,120 @@
-#!/usr/bin/env python3
-"""Minimal evidence collector - fallback channel for erase sessions.
-
-Deliverable D: a single ``POST /sessions`` endpoint that stores whatever the
-erase box uploads.  Two body shapes are accepted:
-
-1. ``multipart/form-data`` with a ``file`` field holding ``<session>.tar.gz``
-   (this is what ``core/report.py`` sends);
-2. raw JSON (the events stream) - useful for debugging with curl.
-
-Everything is written under ``EVIDENCE_ROOT``::
-
-    /srv/evidence/incoming/
-        <session_id>.tar.gz              # whatever rsync/HTTP delivered
-        <session_id>/
-            manifest.json
-            events.jsonl
-            session.cast
-            snapshots/*.svg
-            controller_raw/*.txt
-
-Security: this is intentionally dumb and must run behind a VPN/reverse proxy.
-There is no authentication here - do NOT expose it to an untrusted network.
-"""
+"""Flask application factory for the RaidForge control plane."""
 
 from __future__ import annotations
 
-import json
-import os
-import shutil
-import tarfile
-import tempfile
-from datetime import datetime, timezone
+import logging
 from pathlib import Path
-from typing import Any, Dict, Optional
 
-try:
-    from fastapi import FastAPI, File, Form, HTTPException, UploadFile
-    from fastapi.responses import JSONResponse
-except ImportError:  # pragma: no cover - dependency is optional until runtime
-    raise SystemExit(
-        "FastAPI is not installed. Run:\n"
-        "    pip install -r receiver/requirements.txt\n"
-        "    uvicorn receiver.app:app --host 0.0.0.0 --port 8080"
+from flask import Flask, jsonify, request
+
+from . import __version__
+from .api import agent_api, control_api
+from .auth import ApiError, error_response
+from .config import Settings
+from .db import close_db, init_db
+from .maintenance import start_maintenance
+from .static_site import register_static
+from .timeutil import iso
+
+log = logging.getLogger(__name__)
+
+
+def create_app(settings: Settings | None = None) -> Flask:
+    settings = settings or Settings.from_env()
+    settings.ensure_dirs()
+    init_db(settings)
+
+    app = Flask(__name__, static_folder=None)
+    app.config["SETTINGS"] = settings
+    app.config["MAX_CONTENT_LENGTH"] = settings.max_evidence_bytes + 16 * 1024 * 1024
+    app.json.ensure_ascii = False
+
+    app.teardown_appcontext(close_db)
+    app.register_blueprint(agent_api.bp)
+    app.register_blueprint(control_api.bp)
+
+    @app.get("/healthz")
+    def healthz():
+        return jsonify({"status": "ok", "service": "webplane", "now": iso()})
+
+    @app.after_request
+    def _cors(response):
+        response.headers["Access-Control-Allow-Origin"] = "*"
+        response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
+        response.headers["Access-Control-Allow-Headers"] = (
+            "Content-Type, Accept, Idempotency-Key, X-Raidforge-Token, "
+            "X-Raidforge-Agent-Id, X-Raidforge-Agent-Version, X-Raidforge-Protocol, "
+            "X-Raidforge-Lease"
+        )
+        response.headers["Access-Control-Expose-Headers"] = "Content-Disposition"
+        return response
+
+    @app.before_request
+    def _preflight():
+        if request.method == "OPTIONS" and request.path.startswith("/api/"):
+            return "", 204
+        return None
+
+    @app.errorhandler(ApiError)
+    def _api_error(exc: ApiError):
+        return error_response(exc)
+
+    @app.errorhandler(404)
+    def _not_found(_exc):
+        if request.path.startswith("/api/"):
+            return jsonify({"error_code": "not_found", "message": "unknown API endpoint"}), 404
+        return jsonify({"error_code": "not_found", "message": "not found"}), 404
+
+    @app.errorhandler(405)
+    def _method_not_allowed(_exc):
+        return jsonify({"error_code": "method_not_allowed", "message": "method not allowed"}), 405
+
+    @app.errorhandler(413)
+    def _too_large(_exc):
+        return jsonify({"error_code": "evidence_too_large", "message": "request too large"}), 413
+
+    @app.errorhandler(500)
+    def _server_error(exc):
+        log.exception("unhandled error: %s", exc)
+        return jsonify({"error_code": "internal_error", "message": "internal server error"}), 500
+
+    register_static(app, settings)
+
+    if settings.maintenance:
+        start_maintenance(settings)
+
+    if not settings.agent_token:
+        app.logger.warning(
+            "WEBPLANE_AGENT_TOKEN 未设置：agent API 不校验令牌；请只在内网/VPN 内使用"
+        )
+    app.logger.info("webplane %s data=%s", __version__, settings.data_dir)
+    return app
+
+
+def main() -> None:
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+    )
+    settings = Settings.from_env()
+    app = create_app(settings)
+    app.run(
+        host=settings.host,
+        port=settings.port,
+        threaded=True,
+        use_reloader=False,
+        debug=False,
     )
 
-EVIDENCE_ROOT = Path(os.environ.get("EVIDENCE_ROOT", "/srv/evidence/incoming")).resolve()
-MAX_UPLOAD_BYTES = int(os.environ.get("MAX_UPLOAD_BYTES", str(512 * 1024 * 1024)))
 
-app = FastAPI(
-    title="RAIDFORGE Evidence Receiver",
-    version="1.1.0",
-    description="Accepts RAIDFORGE evidence archives from the Debian live image.",
-)
+def __getattr__(name: str):
+    """Lazy ``app`` so importing the module in tests does not create data dirs."""
 
-
-def _utc() -> str:
-    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    if name == "app":
+        application = create_app()
+        globals()["app"] = application
+        return application
+    raise AttributeError(name)
 
 
-def _safe_session_id(value: str) -> str:
-    """Reject path traversal and keep only boring characters."""
-
-    candidate = os.path.basename((value or "").strip())
-    cleaned = "".join(ch for ch in candidate if ch.isalnum() or ch in "._-")
-    if not cleaned:
-        cleaned = f"unnamed-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}"
-    return cleaned[:128]
-
-
-@app.get("/healthz")
-async def healthz() -> Dict[str, Any]:
-    """Liveness probe."""
-
-    return {"status": "ok", "root": str(EVIDENCE_ROOT), "now": _utc()}
-
-
-@app.get("/sessions")
-async def list_sessions(limit: int = 50) -> Dict[str, Any]:
-    """List stored sessions, newest first."""
-
-    EVIDENCE_ROOT.mkdir(parents=True, exist_ok=True)
-    entries = sorted(
-        (p for p in EVIDENCE_ROOT.iterdir() if p.is_dir()),
-        key=lambda p: p.stat().st_mtime,
-        reverse=True,
-    )[:limit]
-    return {
-        "count": len(entries),
-        "sessions": [
-            {
-                "session_id": p.name,
-                "modified": datetime.fromtimestamp(p.stat().st_mtime, timezone.utc).strftime(
-                    "%Y-%m-%dT%H:%M:%SZ"
-                ),
-                "has_manifest": (p / "manifest.json").is_file(),
-                "has_cast": (p / "session.cast").is_file(),
-            }
-            for p in entries
-        ],
-    }
-
-
-@app.post("/sessions")
-async def receive_session(
-    file: Optional[UploadFile] = File(default=None),
-    server_sn: str = Form(default=""),
-    session_id: str = Form(default=""),
-) -> JSONResponse:
-    """Store one uploaded session archive and unpack it next to itself."""
-
-    if file is None:
-        raise HTTPException(status_code=400, detail="missing 'file' field")
-
-    EVIDENCE_ROOT.mkdir(parents=True, exist_ok=True)
-    sid = _safe_session_id(session_id or file.filename or server_sn)
-    target_dir = EVIDENCE_ROOT / sid
-    tmp_file = EVIDENCE_ROOT / f".tmp-{sid}.tar.gz"
-
-    total = 0
-    try:
-        with tmp_file.open("wb") as sink:
-            while True:
-                chunk = await file.read(1 << 20)
-                if not chunk:
-                    break
-                total += len(chunk)
-                if total > MAX_UPLOAD_BYTES:
-                    raise HTTPException(status_code=413, detail="archive too large")
-                sink.write(chunk)
-    except HTTPException:
-        tmp_file.unlink(missing_ok=True)
-        raise
-    finally:
-        await file.close()
-
-    try:
-        target_dir.mkdir(parents=True, exist_ok=True)
-        with tarfile.open(tmp_file, "r:gz") as archive:
-            # Defence in depth: never trust members that escape the directory.
-            members = [
-                member
-                for member in archive.getmembers()
-                if not Path(member.name).is_absolute() and ".." not in Path(member.name).parts
-            ]
-            archive.extractall(target_dir, members=members)
-        shutil.move(str(tmp_file), str(target_dir.parent / f"{sid}.tar.gz"))
-    except tarfile.TarError as exc:
-        tmp_file.unlink(missing_ok=True)
-        raise HTTPException(status_code=400, detail=f"not a valid tar.gz: {exc}")
-
-    events = (target_dir / "events.jsonl")
-    event_count = 0
-    last_event: Dict[str, Any] = {}
-    if events.is_file():
-        lines = [line for line in events.read_text(encoding="utf-8", errors="replace").splitlines() if line.strip()]
-        event_count = len(lines)
-        try:
-            last_event = json.loads(lines[-1])
-        except json.JSONDecodeError:
-            last_event = {}
-
-    record = {
-        "session_id": sid,
-        "server_sn": server_sn,
-        "received_at": _utc(),
-        "bytes": total,
-        "events": event_count,
-        "last_event": last_event.get("event", ""),
-        "path": str(target_dir),
-    }
-    (target_dir / "_receipt.json").write_text(json.dumps(record, indent=2), encoding="utf-8")
-
-    # Keep the operator facing log append-only.
-    with (EVIDENCE_ROOT / "receipts.jsonl").open("a", encoding="utf-8") as handle:
-        handle.write(json.dumps(record, ensure_ascii=False) + "\n")
-
-    return JSONResponse(status_code=201, content=record)
-
-
-if __name__ == "__main__":  # pragma: no cover
-    import uvicorn
-
-    uvicorn.run(app, host="0.0.0.0", port=int(os.environ.get("PORT", "8080")))
+__all__ = ["create_app", "main"]

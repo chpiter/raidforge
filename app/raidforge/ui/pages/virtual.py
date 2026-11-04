@@ -9,6 +9,7 @@ from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.widgets import DataTable
 
+from ...agent.queue import submit_local
 from ...core.models import RaidAction
 from ..models import ConfirmRequest, HotkeyHint, PageId, RefreshScope, TaskKind, VirtualDiskView
 from ..tasks import make_task, raid_job
@@ -238,7 +239,8 @@ class VirtualPage(StatefulPage):
                 volume_id=view.volume_id,
                 epoch=epoch,
             )
-            self.state.task_runner.submit(  # type: ignore[union-attr]
+            submit_local(
+                self.state,
                 task,
                 raid_job(services, plans, RaidAction.DELETE_VD, view.controller_index, epoch),
             )

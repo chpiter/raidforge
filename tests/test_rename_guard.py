@@ -16,6 +16,12 @@ SKIP_DIRS = {
     "cache",
     ".build",
     ".git",
+    # local toolchains / build output for the webplane frontend and backend
+    ".venv",
+    "venv",
+    "node_modules",
+    "dist",
+    "webplane-data",
 }
 SKIP_FILES = {
     Path("tools") / ".remote.env",

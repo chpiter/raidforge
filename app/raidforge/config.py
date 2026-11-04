@@ -186,7 +186,7 @@ class Config:
     """Root configuration object threaded through every module."""
 
     app_name: str = "raidforge"
-    app_version: str = "1.1.0"
+    app_version: str = "1.2.0"
     dry_run: bool = False
     ui: UiConfig = field(default_factory=UiConfig)
     tools: ToolConfig = field(default_factory=ToolConfig)

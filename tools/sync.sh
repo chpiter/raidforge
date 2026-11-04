@@ -101,6 +101,14 @@ EXCLUDES=(
     --exclude .remote.env
     # local evidence
     --exclude evidence-local
+    # local virtualenvs are never part of the ISO
+    --exclude .venv
+    --exclude venv
+    # webplane frontend deps / build output and local control-plane data
+    --exclude node_modules
+    --exclude dist
+    --exclude webplane-data
+    --exclude '*.sqlite3*'
 )
 # The evidence upload private key IS synced by default: an ISO built without it
 # cannot upload a single session (try_rsync bails with "ssh key missing"), so a

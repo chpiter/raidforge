@@ -1,29 +1,35 @@
 # syntax=docker/dockerfile:1
-FROM python:3.11-slim
 
+FROM node:22-alpine AS web
+WORKDIR /web
+COPY web/package.json web/package-lock.json ./
+RUN npm ci
+COPY web/ ./
+RUN npm run build
+
+FROM python:3.12-slim
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
-    EVIDENCE_ROOT=/srv/evidence/incoming \
-    PORT=8080
+    WEBPLANE_DATA_DIR=/data \
+    WEBPLANE_HOST=0.0.0.0 \
+    WEBPLANE_PORT=8080
 
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends tar \
-    && rm -rf /var/lib/apt/lists/*
-
-WORKDIR /srv/receiver
+WORKDIR /app
 COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY app.py ./
+COPY . ./webplane
+COPY --from=web /web/dist ./webplane/web/dist
 
-RUN useradd --system --create-home --uid 10001 evidence \
-    && mkdir -p "${EVIDENCE_ROOT}" /srv/evidence/ssh-incoming \
-    && chown -R evidence:evidence /srv/evidence
+RUN useradd --system --create-home --uid 10001 webplane \
+    && mkdir -p /data \
+    && chown -R webplane:webplane /data /app
+USER webplane
 
-USER evidence
+VOLUME ["/data"]
 EXPOSE 8080
 
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s \
-    CMD python -c "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8080/healthz').status==200 else 1)"
+    CMD python -c "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8080/api/cp/health').status==200 else 1)"
 
-CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8080"]
+CMD ["gunicorn", "-w", "1", "--threads", "8", "-b", "0.0.0.0:8080", "webplane.app:app"]

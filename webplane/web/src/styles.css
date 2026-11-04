@@ -1,0 +1,105 @@
+:root {
+  --rf-bg: #f5f7fb;
+  --rf-panel: #ffffff;
+  --rf-border: #e4e9f2;
+  --rf-text: #1f2d3d;
+  --rf-muted: #6b7a90;
+  --rf-primary: #2563eb;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--rf-bg);
+  color: var(--rf-text);
+  font-family: "Inter", "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+}
+
+.rf-page {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.rf-grid-4 {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 16px;
+}
+
+@media (max-width: 1100px) {
+  .rf-grid-4 {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+.rf-panel {
+  background: var(--rf-panel);
+  border: 1px solid var(--rf-border);
+  border-radius: 8px;
+  padding: 16px;
+}
+
+.rf-muted {
+  color: var(--rf-muted);
+}
+
+.rf-mono {
+  font-family: "JetBrains Mono", "Cascadia Code", Consolas, monospace;
+  font-size: 12px;
+}
+
+.rf-json {
+  margin: 0;
+  padding: 12px;
+  background: #0f172a;
+  color: #d7e2f1;
+  border-radius: 6px;
+  overflow: auto;
+  max-height: 420px;
+  font-family: "JetBrains Mono", "Cascadia Code", Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.rf-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.rf-toolbar .spacer {
+  flex: 1;
+}
+
+.rf-link {
+  color: var(--rf-primary);
+  cursor: pointer;
+  text-decoration: none;
+}
+
+.rf-link:hover {
+  text-decoration: underline;
+}
+
+.rf-section-title {
+  font-size: 15px;
+  font-weight: 600;
+  margin: 0 0 12px;
+}
+
+.rf-kv-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px 24px;
+}

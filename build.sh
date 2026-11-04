@@ -11,6 +11,9 @@
 #   ./build.sh --preflight     # only run the environment checks
 #   ./build.sh --full-clean    # drop caches, rebuild everything from scratch
 #   ./build.sh --clean         # lb clean --all and remove staging artefacts
+#   ./build.sh --server-url https://cp.internal --api-prefix /api/raidforge
+#                              # 生成 /etc/raidforge/agent.yaml（不含 token）
+#   ./build.sh --poll-mode short --ca-bundle /etc/raidforge/ca.pem
 #
 # Output: raidforge-<version>-<date>.iso (+ .sha256)
 #         --fast appends -test to the name, so a test image can never ship.
@@ -52,13 +55,17 @@ SQUASH_TYPE="xz"
 SQUASH_LEVEL=""
 ISO_SUFFIX=""
 BUILD_ID_WANT=""
+AGENT_SERVER_URL=""
+AGENT_API_PREFIX="/api/raidforge"
+AGENT_POLL_MODE="short"
+AGENT_CA_BUNDLE=""
 
 log()  { printf '\033[1;34m[build]\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33m[warn]\033[0m  %s\n' "$*" >&2; }
 die()  { printf '\033[1;31m[fail]\033[0m  %s\n' "$*" >&2; exit 1; }
 
 usage() {
-    sed -n '5,16p' "$0" | sed 's/^# \{0,1\}//'
+    sed -n '5,20p' "$0" | sed 's/^# \{0,1\}//'
 }
 
 while [[ $# -gt 0 ]]; do
@@ -75,6 +82,10 @@ while [[ $# -gt 0 ]]; do
         --clean)       CLEAN_ONLY=1; DO_BUILD=0; DO_VENDOR=0 ;;
         --keep-cache)  KEEP_CACHE=1 ;;          # default, kept for compatibility
         --full-clean|--no-keep-cache) KEEP_CACHE=0 ;;
+        --server-url)  [[ $# -ge 2 ]] || die "--server-url needs a value"; AGENT_SERVER_URL="$2"; shift ;;
+        --api-prefix)  [[ $# -ge 2 ]] || die "--api-prefix needs a value"; AGENT_API_PREFIX="$2"; shift ;;
+        --poll-mode)   [[ $# -ge 2 ]] || die "--poll-mode needs a value"; AGENT_POLL_MODE="$2"; shift ;;
+        --ca-bundle)   [[ $# -ge 2 ]] || die "--ca-bundle needs a value"; AGENT_CA_BUNDLE="$2"; shift ;;
         -h|--help)     usage; exit 0 ;;
         *)             die "unknown argument: $1" ;;
     esac
@@ -142,7 +153,7 @@ preflight() {
     log "compat shims (storcli<-storcli64/perccli64, ssacli<-hpssacli) are created in the image when needed"
 
     # Not fatal: remove-audit sessions still run and the evidence still lands in
-    # the pending queue, but no session will ever reach the receiver because
+    # the pending queue, but no session will ever reach the control plane because
     # try_rsync() refuses to start without the key.  Say so before the 7 minute
     # build instead of after the first failed upload.
     if ! compgen -G "config/includes.chroot/etc/raidforge/keys/*" >/dev/null; then
@@ -154,7 +165,7 @@ preflight() {
     # into the build as "/usr/bin/env: '/root/xxx.hook.chroot': No such file or
     # directory", which is impossible to debug from there.
     local crlf_files
-    crlf_files="$(grep -rIl $'\r' build.sh Makefile auto config tools tests app receiver 2>/dev/null | head -5 || true)"
+    crlf_files="$(grep -rIl --exclude-dir=node_modules --exclude-dir=dist --exclude-dir=webplane-data --exclude-dir=__pycache__ $'\r' build.sh Makefile auto config tools tests app webplane 2>/dev/null | head -5 || true)"
     if [[ -n "$crlf_files" ]]; then
         printf '%s\n' "$crlf_files" >&2
         die "CRLF line endings found above - run dos2unix (or tools/lf.sh) and retry"
@@ -166,7 +177,71 @@ preflight() {
 # --------------------------------------------------------------------------
 # 2. stage sources + python wheels
 # --------------------------------------------------------------------------
+write_agent_config() {
+    local target="config/includes.chroot/etc/raidforge/agent.yaml"
+    mkdir -p "$(dirname "$target")"
+    [[ "$AGENT_POLL_MODE" == "short" ]] || die "v1 only supports --poll-mode short"
+    if [[ -n "$AGENT_SERVER_URL" && "$AGENT_SERVER_URL" != https://* ]]; then
+        die "--server-url must use https:// (http is loopback-only at runtime)"
+    fi
+    cat > "$target" <<EOF
+# 由 build.sh 生成；只包含非秘密键。token 只能运行时注入。
+server_url: "${AGENT_SERVER_URL}"
+api_prefix: "${AGENT_API_PREFIX}"
+ca_bundle: "${AGENT_CA_BUNDLE}"
+poll_mode: "${AGENT_POLL_MODE}"
+heartbeat_interval: 10
+poll_interval_short: 3
+poll_jitter_ms: 500
+confirm_timeout_seconds: 300
+confirm_policy: "server"
+evidence_dir: "/var/lib/raidforge/evidence"
+state_dir: "/var/lib/raidforge/agent"
+log_dir: "/var/log/raidforge-agent"
+operator:
+  name: ""
+server_sn_override: ""
+report_local_summary: false
+allow_insecure_http: false
+verify_tls: true
+EOF
+    log "agent config -> ${target}"
+}
+
+scan_agent_secrets() {
+    local hits=""
+    if [[ -d "$STAGE_SRC" ]]; then
+        hits="$(grep -RIlE "rf_live_|RAIDFORGE_AGENT_TOKEN|BEGIN (OPENSSH|RSA|EC|PRIVATE) PRIVATE KEY" "$STAGE_SRC" 2>/dev/null | grep -v "/keys/" || true)"
+    fi
+    local generated="config/includes.chroot/etc/raidforge/agent.yaml"
+    if [[ -f "$generated" ]] && grep -qE "^[[:space:]]*token[[:space:]]*:" "$generated"; then
+        [[ -n "$hits" ]] && hits+=$'
+'
+        hits+="${generated}: token field present"
+    fi
+    if [[ -n "$hits" ]]; then
+        printf '%s
+' "$hits" >&2
+        die "agent credentials found in staged ISO inputs"
+    fi
+    if command -v unsquashfs >/dev/null 2>&1 && [[ -f "$SQUASHFS" ]]; then
+        local tmp
+        tmp="$(mktemp -d)"
+        unsquashfs -q -no-xattrs -d "$tmp" "$SQUASHFS" opt/raidforge etc/raidforge >/dev/null 2>&1 || true
+        hits="$(grep -RIlE "rf_live_|RAIDFORGE_AGENT_TOKEN" "$tmp/opt/raidforge" 2>/dev/null || true)"
+        if [[ -f "$tmp/etc/raidforge/agent.yaml" ]] && grep -qE "^[[:space:]]*token[[:space:]]*:" "$tmp/etc/raidforge/agent.yaml"; then
+            [[ -n "$hits" ]] && hits+=$'
+'
+            hits+="squashfs etc/raidforge/agent.yaml: token field present"
+        fi
+        rm -rf "$tmp"
+        [[ -z "$hits" ]] || { printf '%s
+' "$hits" >&2; die "agent credentials found in ISO"; }
+    fi
+}
+
 stage_sources() {
+    write_agent_config
     log "staging application sources -> ${STAGE_SRC}"
     rm -rf "$STAGE_SRC"
     mkdir -p "$(dirname "$STAGE_SRC")"
@@ -188,9 +263,9 @@ vendor_wheels() {
     mkdir -p "$VENDOR_DIR"
     local textual_pin
     textual_pin="$(awk -F'==' '/^textual==/{print $2; exit}' app/requirements.txt)"
-    if [[ -z "$(ls -A "$VENDOR_DIR" 2>/dev/null)" ]] || ! compgen -G "${VENDOR_DIR}/textual-${textual_pin}-*.whl" >/dev/null; then
+    if [[ -z "$(ls -A "$VENDOR_DIR" 2>/dev/null)" ]]         || ! compgen -G "${VENDOR_DIR}/textual-${textual_pin}-*.whl" >/dev/null         || ! compgen -G "${VENDOR_DIR}/requests-*.whl" >/dev/null; then
         log "downloading python wheels for textual ${textual_pin} (Debian 12 ships Python 3.11)"
-        rm -f "${VENDOR_DIR}"/textual-*.whl
+        rm -f "${VENDOR_DIR}"/textual-*.whl "${VENDOR_DIR}"/requests-*.whl
         python3 -m pip download \
             -r app/requirements.txt \
             -d "$VENDOR_DIR" \
@@ -202,7 +277,7 @@ vendor_wheels() {
             --abi cp311 \
             || die "wheel download failed; check network access or run with --no-vendor"
     else
-        log "reusing existing wheels in ${VENDOR_DIR} (textual ${textual_pin})"
+        log "reusing existing wheels in ${VENDOR_DIR} (textual ${textual_pin}, requests present)"
     fi
 }
 
@@ -275,6 +350,7 @@ do_build() {
     log "lb build - this takes a while"
     $maybe_sudo lb build
 
+    scan_agent_secrets
     log "unstaging build inputs"
     unstage
 
@@ -375,6 +451,7 @@ refresh_build() {
     refresh_stage binary_checksums
     refresh_stage binary_iso
 
+    scan_agent_secrets
     unstage
     verify_boot_timeout
     verify_freshness

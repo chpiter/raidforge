@@ -28,6 +28,7 @@ from .models import (
     ReportStatus,
     TaskStatus,
 )
+from ..agent.models import AgentStatusSnapshot, ConfirmRequest as RemoteConfirmRequest
 
 
 class DataRefreshed(Message):
@@ -140,13 +141,78 @@ class Toast(Message):
         self.timeout = timeout
 
 
+class AgentStatusChanged(Message):
+    def __init__(self, status: AgentStatusSnapshot) -> None:
+        super().__init__()
+        self.status = status
+
+    def clone(self) -> "AgentStatusChanged":
+        return AgentStatusChanged(self.status)
+
+
+class RemoteTaskConfirmRequested(Message):
+    def __init__(self, request: RemoteConfirmRequest) -> None:
+        super().__init__()
+        self.request = request
+
+
+class TaskProgressUpdated(Message):
+    def __init__(self, remote_task_id: str, message: str = "", done: int = 0, total: int = 0) -> None:
+        super().__init__()
+        self.remote_task_id = remote_task_id
+        self.message = message
+        self.done = done
+        self.total = total
+
+    def clone(self) -> "TaskProgressUpdated":
+        return TaskProgressUpdated(self.remote_task_id, self.message, self.done, self.total)
+
+
+class TaskFinished(Message):
+    def __init__(self, remote_task_id: str, status: str, error_code: str = "") -> None:
+        super().__init__()
+        self.remote_task_id = remote_task_id
+        self.status = status
+        self.error_code = error_code
+
+    def clone(self) -> "TaskFinished":
+        return TaskFinished(self.remote_task_id, self.status, self.error_code)
+
+
+class LocalTaskFinished(Message):
+    def __init__(self, task_id: str, status: str, message: str = "") -> None:
+        super().__init__()
+        self.task_id = task_id
+        self.status = status
+        self.message = message
+
+    def clone(self) -> "LocalTaskFinished":
+        return LocalTaskFinished(self.task_id, self.status, self.message)
+
+
+class QueueLengthChanged(Message):
+    def __init__(self, depth: int, maximum: int = 4) -> None:
+        super().__init__()
+        self.depth = depth
+        self.maximum = maximum
+
+    def clone(self) -> "QueueLengthChanged":
+        return QueueLengthChanged(self.depth, self.maximum)
+
+
 __all__ = [
+    "AgentStatusChanged",
     "BreadcrumbChanged",
     "ConfirmRequested",
     "DataRefreshed",
     "HotkeysChanged",
+    "LocalTaskFinished",
     "NavigateRequested",
+    "QueueLengthChanged",
+    "RemoteTaskConfirmRequested",
     "ReportStatusChanged",
+    "TaskFinished",
+    "TaskProgressUpdated",
     "TaskStateChanged",
     "Toast",
 ]

@@ -30,6 +30,7 @@ build-start.stamp
 ## staged during build (copies of app/ and wheels)
 config/includes.chroot/usr/src/raidforge/
 config/includes.chroot/usr/src/raidforge-vendor/
+config/includes.chroot/etc/raidforge/agent.yaml
 vendor/wheels/
 
 ## shipped binaries - never commit, see README "Vendor tools"
@@ -53,6 +54,15 @@ config/includes.chroot/etc/raidforge/keys/
 
 ## tool output (tools/check.sh, chroot_tty.py, qemu_drive.py)
 artifacts/
+
+## webplane control plane: frontend deps / build output, local data
+webplane/web/node_modules/
+webplane/web/dist/
+webplane-data/
+*.sqlite3
+*.sqlite3-wal
+*.sqlite3-shm
+webplane/**/__pycache__/
 
 ## debug helper credentials (tools/rssh.py)
 tools/.remote.env

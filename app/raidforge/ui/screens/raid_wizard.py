@@ -15,6 +15,7 @@ from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import Screen
 from textual.widgets import Button, ContentSwitcher, DataTable, Input, Static
 
+from ...agent.queue import submit_local
 from ...core.models import Raid0Mode, RaidAction, RaidCommandPlan, RaidLayout, RaidLevel
 from ..focus import FocusLabelMixin, capture_focus
 from ..models import ConfirmRequest, HotkeyHint, TaskKind
@@ -363,7 +364,8 @@ class RaidWizardScreen(FocusLabelMixin, Screen):
                 disk_ids=sorted(self.selected),
                 epoch=epoch,
             )
-            self.state.task_runner.submit(  # type: ignore[union-attr]
+            submit_local(
+                self.state,
                 task,
                 raid_job(
                     self.state.services,

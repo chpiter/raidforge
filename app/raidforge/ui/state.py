@@ -131,6 +131,7 @@ class AppState:
     evidence_sessions: List[EvidenceSessionView] = field(default_factory=list)
     task_runner: object = field(default=None, repr=False)
     services: object = field(default=None, repr=False)
+    agent_runtime: object = field(default=None, repr=False)
 
     # -- concurrency (existing semantics) ----------------------------------
     cancel_event: threading.Event = field(default_factory=threading.Event, repr=False)

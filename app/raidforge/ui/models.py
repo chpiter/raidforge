@@ -11,6 +11,7 @@ from __future__ import annotations
 from collections import deque
 from dataclasses import dataclass, field
 from enum import Enum
+import threading
 from typing import Deque, List, Optional
 
 from ..core.models import VolumeInfo, utc_now_iso
@@ -72,6 +73,7 @@ class TaskKind(str, Enum):
     REPORT = "report"
     UPLOAD = "upload"
     EVIDENCE_SCAN = "evidence_scan"
+    REMOTE = "remote"
 
 
 class TaskStatus(str, Enum):
@@ -310,6 +312,12 @@ class TaskItem:
     error: str = ""
     epoch: int = 0
     report_path: str = ""
+    priority: int = 0
+    origin: str = "local"
+    remote_task_id: str = ""
+    coalesce_key: str = ""
+    skip_dispatch: bool = False
+    abort_requested: threading.Event = field(default_factory=threading.Event, repr=False, compare=False)
 
     @property
     def progress_text(self) -> str:

@@ -1,0 +1,9 @@
+web/node_modules
+web/dist
+webplane-data
+.venv
+venv
+__pycache__
+*.pyc
+.pytest_cache
+tests

@@ -6,6 +6,6 @@ configuration, and submits erasure commands to the controller while recording
 cryptographic evidence.
 """
 
-__version__ = "1.1.0"
+__version__ = "1.2.0"
 
 __all__ = ["__version__"]

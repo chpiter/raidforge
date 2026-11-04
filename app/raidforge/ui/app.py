@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import signal
 import threading
 from pathlib import Path
 from typing import Callable, Optional
@@ -63,6 +64,32 @@ class RaidforgeApp(App[None]):
         )
         self.push_screen(MainScreen(self.state))
         self.set_timer(0.2, self._focus_nav)
+        self._install_signal_handlers()
+
+    def _install_signal_handlers(self) -> None:
+        if threading.current_thread() is not threading.main_thread():
+            return
+        for signum in (signal.SIGTERM, signal.SIGINT):
+            try:
+                signal.signal(signum, self._on_signal)
+            except (ValueError, OSError):  # pragma: no cover - platform dependent
+                pass
+
+    def _on_signal(self, signum, frame) -> None:
+        threading.Thread(target=self._graceful_shutdown, name="agent-drain", daemon=True).start()
+
+    def _graceful_shutdown(self) -> None:
+        runtime = getattr(self.state, "agent_runtime", None)
+        if runtime is not None:
+            try:
+                runtime.stop(grace=10.0)
+            except Exception:  # pragma: no cover
+                pass
+        self.state.shutdown_event.set()
+        try:
+            self.call_ui(self.exit)
+        except Exception:  # pragma: no cover - app already gone
+            pass
 
     def on_unmount(self) -> None:  # pragma: no cover - trivial
         self.state.evidence.emit("tui_stopped")
@@ -192,6 +219,12 @@ class RaidforgeApp(App[None]):
                 # Second press: exit even if the vendor command is still running.
                 pass
         self.state.evidence.emit("quit_requested", cancel_run=self.state.cancel_event.is_set())
+        runtime = getattr(self.state, "agent_runtime", None)
+        if runtime is not None:
+            try:
+                runtime.stop(grace=10.0)
+            except Exception:  # pragma: no cover
+                pass
         self.state.shutdown_event.set()
         self.exit()
 

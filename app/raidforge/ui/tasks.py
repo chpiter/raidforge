@@ -59,7 +59,11 @@ class TaskContext:
         self.runner.request_snapshot(name, self.task.epoch)
 
     def cancelled(self) -> bool:
-        return self.task.status is TaskStatus.CANCELLED or self.runner.state.cancel_event.is_set()
+        return (
+            self.task.status is TaskStatus.CANCELLED
+            or self.task.abort_requested.is_set()
+            or self.runner.state.cancel_event.is_set()
+        )
 
     def enqueue(self, task: TaskItem, job: "Job") -> None:
         self.runner.submit(task, job)
@@ -68,24 +72,62 @@ class TaskContext:
 Job = Callable[[TaskContext], Optional[TaskStatus]]
 
 
+class QueueFullError(RuntimeError):
+    """有界执行队列已满（本地最多等待 0.5s）。"""
+
+
 class TaskRunner:
-    """One dispatcher thread; jobs run one at a time via ``ctx.spawn``."""
+    """One dispatcher thread; jobs run one at a time via ``ctx.spawn``.
+
+    The queue is bounded (4) and prioritised: local operator actions use 0,
+    remote agent tasks use 100.  ``seq`` keeps FIFO order inside a priority.
+    """
 
     def __init__(self, state: AppState, app, broadcast: Callable[[object], None], services: Services) -> None:
         self.state = state
         self.app = app
         self.broadcast = broadcast
         self.services = services
-        self._queue: "queue.Queue[Optional[tuple[TaskItem, Job]]]" = queue.Queue()
+        self._queue: "queue.PriorityQueue[Optional[tuple[int, int, str, TaskItem, Job]]]" = queue.PriorityQueue(
+            maxsize=4
+        )
+        self._seq = 0
+        self._seq_lock = threading.Lock()
         self._stop = threading.Event()
         self._thread = threading.Thread(target=self._dispatch, name="ui-task-dispatcher", daemon=True)
         self._thread.start()
 
     # -- public -------------------------------------------------------------
-    def submit(self, task: TaskItem, job: Job) -> TaskItem:
+    def submit(
+        self,
+        task: TaskItem,
+        job: Job,
+        *,
+        priority: int = 0,
+        origin: str = "local",
+    ) -> TaskItem:
+        task.priority = int(priority)
+        task.origin = origin
+        with self._seq_lock:
+            self._seq += 1
+            seq = self._seq
+        item = (task.priority, seq, task.id, task, job)
         self.state.task_queue.append(task)
         self.emit_task(task)
-        self._queue.put((task, job))
+        try:
+            if origin == "local":
+                self._queue.put(item, timeout=0.5)
+            else:
+                self._queue.put_nowait(item)
+        except queue.Full:
+            try:
+                self.state.task_queue.remove(task)
+            except ValueError:
+                pass
+            task.status = TaskStatus.FAILED
+            task.error = "queue full"
+            self.emit_task(task)
+            raise QueueFullError("execution queue is full (4)") from None
         return task
 
     def cancel_active(self) -> bool:
@@ -100,9 +142,29 @@ class TaskRunner:
                 break
         return True
 
+    def abort_task(self, task_id: str) -> bool:
+        """Request cooperative abort of one task without touching other tasks."""
+
+        for task in self.state.task_queue:
+            if task.id == task_id:
+                task.abort_requested.set()
+                task.log("abort requested")
+                self.emit_task(task)
+                return True
+        return False
+
+    def find_task(self, task_id: str) -> Optional[TaskItem]:
+        for task in self.state.task_queue:
+            if task.id == task_id:
+                return task
+        return None
+
     def shutdown(self) -> None:
         self._stop.set()
-        self._queue.put(None)
+        try:
+            self._queue.put((0, -1, "__stop__", None, None), timeout=1.0)  # type: ignore[arg-type]
+        except queue.Full:  # pragma: no cover - dispatcher is blocked in a job
+            pass
 
     # -- internals ----------------------------------------------------------
     def _dispatch(self) -> None:
@@ -110,8 +172,10 @@ class TaskRunner:
             item = self._queue.get()
             if item is None:
                 break
-            task, job = item
-            if task.status is TaskStatus.CANCELLED:
+            _, _, _, task, job = item
+            if task is None or job is None:
+                break
+            if task.skip_dispatch or task.status is TaskStatus.CANCELLED:
                 continue
             self._run(task, job)
 
@@ -211,6 +275,12 @@ def refresh_job(services: Services, scope: RefreshScope = RefreshScope.ALL, cont
             return TaskStatus.FAILED
         state.mark_refresh_finished()
         state.evidence.emit("ui_refresh", scope=scope.value, controller_index=controller_index)
+        runtime = getattr(state, "agent_runtime", None)
+        if runtime is not None:
+            try:
+                runtime.notify_refresh_success(scope.value)
+            except Exception:  # pragma: no cover - agent must not break local refresh
+                pass
         ctx.runner._safe_broadcast(
             DataRefreshed(scope, controller_index=controller_index, generation=state.refresh.generation)
         )
@@ -414,6 +484,7 @@ def make_task(
 
 __all__ = [
     "Job",
+    "QueueFullError",
     "TaskContext",
     "TaskRunner",
     "erase_job",

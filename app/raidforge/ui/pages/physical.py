@@ -9,6 +9,7 @@ from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.widgets import DataTable
 
+from ...agent.queue import submit_local
 from ...core.models import DiskInfo, Vendor
 from ..messages import NavigateRequested
 from ..models import ConfirmRequest, HotkeyHint, PageId, RefreshScope, TaskKind
@@ -290,7 +291,8 @@ class PhysicalPage(StatefulPage):
                 disk_ids=[plan.disk_id for plan in plans],
                 epoch=epoch,
             )
-            self.state.task_runner.submit(  # type: ignore[union-attr]
+            submit_local(
+                self.state,
                 task,
                 erase_job(services, plans, snapshot, epoch, controller_index),
             )

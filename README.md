@@ -26,7 +26,7 @@ root 启动 Textual TUI，完成「阵列卡探测 → RAID/物理盘查看 → 
 ```
 raidforge/
 ├── build.sh                      构建入口（前置校验 / 拉 wheel / lb clean+build / 产出重命名）
-├── Makefile                      build / plan / run / test / pytest / receiver 等快捷目标
+├── Makefile                      build / plan / run / test / pytest / webplane 等快捷目标
 ├── README.md                     本文档
 ├── .gitignore
 │
@@ -83,7 +83,7 @@ raidforge/
 │           └── screens/{dashboard,controllers,controller_detail,raid_create,
 │                        raid_confirm,raid_progress,disk_list,confirm,progress,settings}.py
 │
-├── receiver/                    最小接收端（FastAPI，仅 POST /sessions）
+├── webplane/                    RaidForge Control Plane（Flask + Vue3 + Element Plus，Agent 管理）
 ├── tests/
 │   ├── test_detection.sh        交付物 E：探测链 / 枚举 / 干跑命令构造（Linux/WSL）
 │   ├── test_core.py             解析层与命令层单测（跨平台）
@@ -508,33 +508,62 @@ ip -o -4 addr show scope global                     # 至少要有一块网卡�
 接收端是否安装了 `rsync`——设置页的探测只验证登录和目录可写，**不验证远端
 rsync**。
 
-### 5.2 备通道：HTTP POST /sessions
+### 5.2 RaidForge Control Plane（webplane）
 
-`receiver/` 下是最小实现（FastAPI，**无鉴权，务必只在内网/VPN 后运行**），默认端口
-**8080**：
+`webplane/` 是独立的 Agent 控制面（Flask + Vue 3 + Element Plus），负责 agent 注册/
+心跳、任务下发、进度与结果回收、证据上传和取消控制。**UI 与 `/api/cp` 不做认证**，
+只能部署在内网/VPN 后。
+
+> 旧的 `receiver/` 与 `POST /sessions` 证据接收接口已移除。TUI 的证据上传请使用
+> SSH/rsync（§5.1）；`GET /healthz` 保留为兼容探活别名，设置页的 HTTP 探测仍可用，
+> 但 HTTP 证据上传不再有服务端接收。
+
+启动（开发机需要 Python 3.11+ 与 Node 20+）：
 
 ```bash
-cd receiver
-pip install -r requirements.txt
-EVIDENCE_ROOT=/srv/evidence/http python -m uvicorn app:app --host 0.0.0.0 --port 8080
-
-# 或容器
-docker build -t erase-receiver .
-docker run -d -p 8080:8080 -v /srv/evidence:/srv/evidence -e EVIDENCE_ROOT=/srv/evidence/incoming erase-receiver
+cd webplane
+python -m venv .venv && . .venv/bin/activate     # Windows: .venv\Scripts\activate
+pip install -r requirements.txt -r requirements-dev.txt
+cd web && npm install && npm run build && cd ..
+WEBPLANE_DATA_DIR=/srv/raidforge-control python -m webplane
+# UI: http://<host>:8080/   API: /api/cp/*
 ```
 
-接口：
+也可以分两段跑：`python -m webplane` 起后端，`cd web && npm run dev` 起 Vite
+（5173，`/api` 自动代理到 8080）。
 
-| 方法 | 路径 | 说明 |
+| 变量 | 默认 | 说明 |
 |---|---|---|
-| POST | `/sessions` | multipart：`file=<session>.tar.gz`，附带 `server_sn` / `session_id` 表单字段。落盘到 `$EVIDENCE_ROOT/<session_id>/` 并解包，同时留一份 tar.gz |
-| GET | `/sessions?limit=50` | 列出已收会话 |
-| GET | `/healthz` | 探活（设置页 HTTP 探测只发这个 GET，不会创建空会话） |
+| `WEBPLANE_DATA_DIR` | `./webplane-data` | SQLite 与证据根目录 |
+| `WEBPLANE_AGENT_TOKEN` / `RAIDFORGE_CP_TOKEN` | 空 | 设置后校验 `X-Raidforge-Token`；空则不校验 |
+| `WEBPLANE_LEASE_SECONDS` | `900` | 任务租约时长（覆盖 agent 确认屏） |
+| `WEBPLANE_AGENT_OFFLINE_SECONDS` | `45` | 超过该时间无心跳判离线 |
+| `WEBPLANE_PORT` / `WEBPLANE_HOST` | `8080` / `0.0.0.0` | 监听地址 |
+
+Agent 侧配置：`api_prefix: /api/raidforge`；`server_url` 对非回环地址必须是
+`https://`（agent 拒绝明文远程 HTTP），本机联调可用 `http://127.0.0.1:8080` 并设置
+`allow_insecure_http: true`。生产建议在 webplane 前放 TLS 反向代理。token 按 §9 的
+`RF_AGENT_TOKEN` / U 盘 / cmdline 方式注入。控制面端点（与 agent 客户端一致）：
+
+```
+POST /api/raidforge/agent/heartbeat
+GET  /api/raidforge/agent/tasks/next?server_sn=...
+GET  /api/raidforge/agent/tasks/{task_id}
+POST /api/raidforge/agent/tasks/{task_id}/started|progress|evidence|result|release
+GET  /api/raidforge/agent/tasks/{task_id}/cancel_requested
+```
+
+容器：
+
+```bash
+docker build -t raidforge-webplane webplane
+docker run -d -p 8080:8080 -v rf-data:/data raidforge-webplane
+```
 
 HTTP 地址解析顺序：显式 `report.http_base_url` 优先；为空时由
 `http://<ssh_host>:<http_port>` 推导。设置页保存时会用当前 IP + HTTP 端口重写
-`http_base_url`（保留原 `https://` 和路径前缀），因此 TUI 里改 IP/端口对两种通道
-都生效。永久默认值改 hook 工厂模板，现场值写
+`http_base_url`（保留原 `https://` 和路径前缀），因此 TUI 里改 IP/端口对 SSH 通道
+和 `/healthz` 探活都生效。永久默认值改 hook 工厂模板，现场值写
 `/etc/raidforge/config.d/90-site.yaml`。
 
 ### 5.3 传输顺序与补传
@@ -551,6 +580,9 @@ HTTP 地址解析顺序：显式 `report.http_base_url` 优先；为空时由
    待传会话。
 7. TUI 的 Dashboard 上按 `U` 可手动重刷一次。
 
+> `webplane/` 控制面不提供 `/sessions`，因此 HTTP 证据上传没有接收端；现场请把
+> `report.transport` 设为 `ssh`（§5.1）。HTTP 仍可用于 `GET /healthz` 探活。
+>
 > 退出阶段只重新计算 `manifest.json` 的哈希，不再生成 DOCX、不再上传；报告和上传
 > 只在擦除命令执行完后发生。每轮即时上传共用同一把发布锁。
 
@@ -886,6 +918,7 @@ NVMe 时用 `sanitize`，其余一律 `blockerase` —— 不猜。
 
 ```bash
 pytest tests -q                      # 跨平台全量；装齐依赖并使用 7.5.0 时全绿
+pytest webplane/tests -q             # 控制面：agent 协议 / 管理 API / 并发领取
 ./tools/check.sh                     # L0：bash -n + pytest + 探测链 mock + 80×25 UI 冒烟（~30s）
 tests/test_detection.sh --mock       # Linux/WSL/macOS：用伪造 CLI 跑真实进程链
 tests/test_detection.sh --real       # 在真机上打印它构造出的命令（不执行任何东西）
@@ -971,7 +1004,8 @@ Windows 的 Git Bash 会把 `/root/...` 改写成盘符路径，调用前加 `MS
   `manifest.json`；现有 DOCX 报告仍只记录擦除轮次，未包含 RAID 章节。
 * `ssacli` / `arcconf` 的部分高级擦除模式和全部 RAID 命令依赖固件支持，见 §7 的
   VERIFY 提示。
-* 接收端示例无鉴权，仅供内网使用；公网请加 mTLS/VPN。
+* `webplane/` 控制面 UI 与 `/api/cp` 无鉴权，仅供内网/VPN 使用；agent 面可用
+  `WEBPLANE_AGENT_TOKEN` 做共享令牌校验。
 * 证据上传私钥随 ISO 分发且无口令；持有 ISO 等同于持有该接收账号的凭证。接收端应
   用 `authorized_keys` 的 `from=`/`restrict`/forced command 把权限限制到
   `/srv/evidence/incoming`。
@@ -981,8 +1015,8 @@ Windows 的 Git Bash 会把 `/root/...` 改写成盘符路径，调用前加 `MS
   **重启即失效**；永久值要改 `010-install-app.hook.chroot` 的工厂模板后重建镜像。
 * 设置页的 SSH 探测只验证「密钥能登录 + 远端根目录可写」，**不验证接收端是否装了
   `rsync`**，也不做 rsync dry-run（那会在每次保存时传数据）；远端缺 rsync 时探测仍
-  会显示 reachable，但正式上传会失败并进入待传队列。HTTP 探测只发 `GET /healthz`，
-  不验证 `/sessions` 的写入权限。
+  会显示 reachable，但正式上传会失败并进入待传队列。HTTP 探测只发 `GET /healthz`；
+  当前 `webplane/` 不接收 `/sessions`，HTTP 证据通道应视为不可用。
 * 设置页保存时会按当前 IP + HTTP 端口重写 `http_base_url`（保留 scheme 和路径）；
   若配置里显式写了不同主机，保存前会在提示行说明。
 * `10-raidforge-dhcp.network` 会匹配所有 ether 类型网卡（含残留网桥/虚拟网卡）；

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from typing import List, Optional
 
 from textual.app import ComposeResult
@@ -11,11 +12,15 @@ from textual.screen import Screen
 from textual.widgets import ContentSwitcher
 
 from ..messages import (
+    AgentStatusChanged,
     BreadcrumbChanged,
     DataRefreshed,
     HotkeysChanged,
     NavigateRequested,
+    QueueLengthChanged,
+    RemoteTaskConfirmRequested,
     ReportStatusChanged,
+    TaskFinished,
     TaskStateChanged,
     Toast,
 )
@@ -36,6 +41,9 @@ from ..widgets.breadcrumb import Breadcrumb
 from ..widgets.hotkey_bar import HotkeyBar
 from ..widgets.nav_bar import NavBar
 from ..widgets.status_bar import StatusBar
+from ..widgets.agent_status import AgentStatus
+from ..screens.remote_task_confirm import RemoteTaskConfirmScreen
+from ...agent.models import ConfirmDecision
 
 PAGE_CLASSES = {
     PageId.DASHBOARD: DashboardPage,
@@ -110,6 +118,36 @@ class MainScreen(FocusLabelMixin, Screen):
             refresh_job(self.state.services, RefreshScope.ALL),  # type: ignore[arg-type]
         )
         self.state.spawn(self._probe_network, name="network-probe")
+        self._start_agent()
+
+    def _start_agent(self) -> None:
+        """Agent 在首帧之后启动；任何失败都只影响状态栏。"""
+
+        try:
+            self.query_one(StatusBar).mount(AgentStatus(id="status-agent"))
+        except Exception:  # pragma: no cover - compose timing
+            pass
+        try:
+            from ...agent.runtime import build_agent
+
+            self.state.agent_runtime = build_agent(self.state, ui_post=self._agent_ui_post)
+            runtime = self.state.agent_runtime
+            if runtime is not None:
+                self.set_timer(0.1, runtime.start)
+        except Exception:  # pragma: no cover - Agent 故障不得影响 TUI
+            self.state.agent_runtime = None
+
+    def _agent_ui_post(self, message) -> None:
+        try:
+            self.app.call_ui(lambda: self.post_message(message))
+        except Exception:
+            pass
+
+    def _agent_status_widget(self) -> Optional[AgentStatus]:
+        try:
+            return self.query_one("#status-agent", AgentStatus)
+        except Exception:
+            return None
 
     def _focus_nav(self) -> None:
         try:
@@ -135,6 +173,12 @@ class MainScreen(FocusLabelMixin, Screen):
         self._update_chrome()
 
     def on_unmount(self) -> None:
+        runtime = getattr(self.state, "agent_runtime", None)
+        if runtime is not None:
+            try:
+                runtime.stop(grace=1.0)
+            except Exception:  # pragma: no cover
+                pass
         runner = self.state.task_runner
         if runner is not None:
             try:
@@ -270,6 +314,89 @@ class MainScreen(FocusLabelMixin, Screen):
 
     def on_report_status_changed(self, message: ReportStatusChanged) -> None:
         self._update_chrome()
+
+    # -- agent --------------------------------------------------------------
+    def on_agent_status_changed(self, message: AgentStatusChanged) -> None:
+        widget = self._agent_status_widget()
+        if widget is not None:
+            try:
+                widget.update_status(message.status)
+            except Exception:
+                pass
+        self._update_chrome()
+
+    def on_queue_length_changed(self, message: QueueLengthChanged) -> None:
+        self._update_chrome()
+
+    def on_task_finished(self, message: TaskFinished) -> None:
+        level = "information" if message.status == "finished" else "warning"
+        try:
+            self.app.notify(
+                f"远程任务 {message.remote_task_id}: {message.status}"
+                + (f" ({message.error_code})" if message.error_code else ""),
+                severity=level,
+                timeout=5.0,
+            )
+        except Exception:
+            pass
+        self._update_chrome()
+
+    def on_remote_task_confirm_requested(self, message: RemoteTaskConfirmRequested) -> None:
+        request = message.request
+        if getattr(self.app, "screen", None) is self:
+            self._push_remote_confirm(request)
+            return
+        self._pending_confirm = request
+        self._pending_confirm_since = time.monotonic()
+        self.toast("远程任务确认等待当前界面关闭", "warn")
+        self.set_timer(1.0, self._maybe_push_confirm)
+
+    def _maybe_push_confirm(self) -> None:
+        request = getattr(self, "_pending_confirm", None)
+        if request is None:
+            return
+        if request.done.is_set():
+            self._pending_confirm = None
+            return
+        since = getattr(self, "_pending_confirm_since", time.monotonic())
+        if time.monotonic() - since > max(1, request.timeout_seconds):
+            request.decision = ConfirmDecision(
+                approved=False,
+                operator=request.default_operator,
+                reason="confirm_timeout",
+            )
+            request.done.set()
+            self._pending_confirm = None
+            return
+        if getattr(self.app, "screen", None) is self:
+            self._pending_confirm = None
+            self._push_remote_confirm(request)
+            return
+        self.set_timer(1.0, self._maybe_push_confirm)
+
+    def _push_remote_confirm(self, request) -> None:
+        if request.done.is_set():
+            return
+
+        def _done(decision) -> None:
+            if decision is None:
+                decision = ConfirmDecision(
+                    approved=False,
+                    operator=request.default_operator,
+                    reason="confirm_rejected",
+                )
+            request.decision = decision
+            request.done.set()
+
+        try:
+            self.app.push_screen(RemoteTaskConfirmScreen(request), _done)
+        except Exception:
+            request.decision = ConfirmDecision(
+                approved=False,
+                operator=request.default_operator,
+                reason="confirm_rejected",
+            )
+            request.done.set()
 
     # -- chrome -------------------------------------------------------------
     def _task_label(self) -> str:

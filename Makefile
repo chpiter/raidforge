@@ -37,7 +37,7 @@ pytest:           ## unit tests for the parsing and command layers
 	cd app && python3 -m pytest ../tests -q
 
 compile:          ## syntax check everything
-	python3 -m compileall -q app/raidforge receiver tests
+	python3 -m compileall -q app/raidforge webplane tests
 
 # ---------------- remote debug host ----------------
 sync:             ## push the tree to the build host (192.168.40.132)
@@ -55,11 +55,18 @@ remote-build: sync ## sync, then build the ISO on the build host
 remote-sh:        ## open a shell command on the build host, e.g. make remote-sh CMD=uptime
 	./tools/sync.sh --run "$(CMD)"
 
-receiver:         ## run the collector stub locally
-	python3 -m uvicorn receiver.app:app --host 0.0.0.0 --port 8080
+webplane:         ## run the control plane locally (Flask, port 8080)
+	python3 -m webplane
+
+webplane-test:    ## run control-plane unit tests
+	python3 -m pytest webplane/tests -q
+
+webplane-web:     ## build the Vue frontend into webplane/web/dist
+	cd webplane/web && npm run build
 
 help:
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-16s\033[0m %s\n", $$1, $$2}'
 
-.PHONY: build build-no-vendor vendor preflight clean clean-all plan run test check pytest compile receiver help \
+.PHONY: build build-no-vendor vendor preflight clean clean-all plan run test check pytest compile \
+        webplane webplane-test webplane-web help \
         sync sync-all sync-watch remote-build remote-sh

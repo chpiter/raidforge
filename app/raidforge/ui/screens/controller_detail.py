@@ -8,6 +8,7 @@ from textual.containers import Vertical
 from textual.screen import Screen
 from textual.widgets import DataTable, Static
 
+from ...agent.queue import submit_local
 from ...core.models import RaidAction
 from ..focus import FocusLabelMixin, capture_focus
 from ..models import ConfirmRequest, HotkeyHint, RefreshScope, TaskKind
@@ -220,7 +221,8 @@ class ControllerDetailScreen(FocusLabelMixin, Screen):
                     volume_id=view.volume_id,
                     epoch=epoch,
                 )
-                self.state.task_runner.submit(  # type: ignore[union-attr]
+                submit_local(
+                    self.state,
                     task,
                     raid_job(services, plans, RaidAction.DELETE_VD, self.controller_index, epoch),
                 )
@@ -269,7 +271,8 @@ class ControllerDetailScreen(FocusLabelMixin, Screen):
                     controller_index=self.controller_index,
                     epoch=epoch,
                 )
-                self.state.task_runner.submit(  # type: ignore[union-attr]
+                submit_local(
+                    self.state,
                     task,
                     raid_job(services, plans, RaidAction.CLEAR_CONFIG, self.controller_index, epoch),
                 )

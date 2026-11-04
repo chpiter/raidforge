@@ -13,3 +13,6 @@ pyyaml>=6.0,<7.0
 python-docx==1.1.2
 Pillow==10.4.0
 lxml==4.9.4
+# Agent 客户端 HTTP 传输（每线程 Session、TLS/CA、multipart）。必须进入
+# vendor/wheels，构建脚本会校验 requests 轮子存在后再复用缓存。
+requests>=2.31.0,<3.0

@@ -1,0 +1,27 @@
+#!/bin/bash
+#
+# Agent runtime directories.  Never write credentials here: the token is
+# injected at runtime through /run/raidforge/agent.env or a labelled USB.
+#
+set -Eeuo pipefail
+
+echo "== raidforge: agent directories =="
+
+install -d -m 0700 /etc/raidforge
+install -d -m 0700 /var/lib/raidforge
+install -d -m 0700 /var/lib/raidforge/evidence
+install -d -m 0700 /var/lib/raidforge/agent
+install -d -m 0755 /run/raidforge
+install -d -m 0755 /var/log/raidforge-agent
+
+# /run is tmpfs and may be recreated empty at boot; the TUI creates it lazily too.
+chmod 0700 /var/lib/raidforge/evidence /var/lib/raidforge/agent 2>/dev/null || true
+chmod 0755 /run/raidforge /var/log/raidforge-agent 2>/dev/null || true
+
+# The generated /etc/raidforge/agent.yaml must contain no token key.
+if [[ -f /etc/raidforge/agent.yaml ]] && grep -qE '^[[:space:]]*token[[:space:]]*:' /etc/raidforge/agent.yaml; then
+    echo "!! agent.yaml contains a token field - refusing to bake credentials into the ISO" >&2
+    exit 1
+fi
+
+echo "== raidforge: agent directories done =="
