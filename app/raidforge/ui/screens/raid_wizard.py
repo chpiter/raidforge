@@ -16,7 +16,7 @@ from textual.screen import Screen
 from textual.widgets import Button, ContentSwitcher, DataTable, Input, Static
 
 from ...core.models import Raid0Mode, RaidAction, RaidCommandPlan, RaidLayout, RaidLevel
-from ..focus import capture_focus
+from ..focus import FocusLabelMixin, capture_focus
 from ..models import ConfirmRequest, HotkeyHint, TaskKind
 from ..state import AppState
 from ..tasks import make_task, raid_job
@@ -27,7 +27,7 @@ from ..widgets.hotkey_bar import HotkeyBar
 STEPS = [("level", "1 Level"), ("disks", "2 Disks"), ("preview", "3 Preview"), ("confirm", "4 Confirm")]
 
 
-class RaidWizardScreen(Screen):
+class RaidWizardScreen(FocusLabelMixin, Screen):
     BINDINGS = [
         Binding("escape", "back", "Back", show=False, priority=True),
         Binding("enter", "next_step", "Next", show=False, priority=True),

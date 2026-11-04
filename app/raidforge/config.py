@@ -48,25 +48,24 @@ YAML_KEY = "config"
 class UiConfig:
     """Visual settings for the Textual application.
 
-    Black on white is deliberate: the appliance runs on the bare Linux console,
-    which only has the 16 ANSI colours.  Very dark "almost black" backgrounds
-    (#002B49 and friends) get mapped to *bright black* on the way out, and
-    several VGA/fbcon implementations then draw them on top of a coloured
-    background as nothing at all.  Pure #000000 / #FFFFFF survive every mapping.
+    The default is the 7.2 deep-blue palette.  The monochrome palette remains
+    available for 16-colour VGA/fbcon consoles where a dark background is
+    quantised to bright black, but it is only used when explicitly selected.
     """
 
-    # DEPRECATED, accepted and ignored: the palette is fixed to black/white in
-    # ui/theme.py.  The fields stay so that an existing /etc/raidforge/config.yaml
-    # (which may still carry the old navy/cyan values) keeps loading instead of
-    # raising TypeError at startup.
-    background: str = "#000000"
-    foreground: str = "#FFFFFF"
-    accent: str = "#4CC2FF"
-    danger: str = "#FF5F56"
-    ok: str = "#3DDC84"
+    # DEPRECATED, accepted and ignored: the palette is defined by ui/palette.py.
+    # The fields stay so that an existing /etc/raidforge/config.yaml (which may
+    # still carry the old navy/cyan values) keeps loading instead of raising
+    # TypeError at startup.
+    background: str = "#002B49"
+    foreground: str = "#E6F4FA"
+    accent: str = "#4FC3F7"
+    danger: str = "#FF5252"
+    ok: str = "#66BB6A"
     refresh_interval: float = 1.0
-    #: auto | raidforge | raidforge-mono.  "auto" falls back to mono on TERM=linux.
-    theme: str = "auto"
+    #: auto | raidforge | raidforge-mono.  "auto" is an alias for deep blue;
+    #: monochrome must be selected explicitly.
+    theme: str = "raidforge"
 
 
 @dataclass
@@ -159,13 +158,13 @@ class ReportConfig:
     http_timeout: float = 30.0
     pending_root: str = "/var/lib/raidforge/pending"
     uploaded_root: str = "/var/lib/raidforge/uploaded"
-    #: Hard cap on the "ship the evidence" step that runs *after* the TUI exits.
-    #: Without it the operator stares at a blank console for up to 2.5 minutes
-    #: (30s route wait + 90s rsync + 30s HTTP) and concludes the box has hung.
+    #: Legacy cap for explicit ``finalize_session(publish=True)`` calls and
+    #: tests.  The application exit path no longer uploads; erase tasks upload
+    #: immediately with ``run_upload_seconds``.
     exit_upload_seconds: float = 30.0
-    #: Best-effort upload budget after each erase run, while the TUI stays live.
-    #: A failure here is recorded but never copied into pending/ (the exit path
-    #: owns queueing, when the session directory has stopped changing).
+    #: Best-effort upload budget after each erase command sequence, while the
+    #: TUI stays live.  A failure is recorded in ReportStatus/events; the exit
+    #: path no longer builds a report or queues another upload.
     run_upload_seconds: float = 30.0
 
     def __post_init__(self) -> None:

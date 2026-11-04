@@ -22,18 +22,17 @@ app_name: "raidforge"
 app_version: "1.1.0"
 
 ui:
-  # The palette is NOT configurable any more: the appliance runs on the bare
-  # Linux console with 16 ANSI colours, and every "almost black" brand colour
-  # (#002B49 was the old one) degrades to bright black (SGR 90), which several
-  # VGA/fbcon implementations draw as *nothing* on a coloured bar.
-  # Black and white are therefore baked into app/raidforge/ui/theme.py.
-  #
-  # The colour keys below are accepted for backwards compatibility and ignored.
-  # background: "#000000"
-  # foreground: "#FFFFFF"
-  # accent: "#4CC2FF"
-  # danger: "#FF5F56"
-  # ok: "#3DDC84"
+  # Deep blue is the default on every terminal.  Monochrome is only used when
+  # explicitly selected here (or with RAIDFORGE_THEME=mono /
+  # RAIDFORGE_MONO=1); TERM=linux no longer switches the palette.
+  theme: "raidforge"          # auto | raidforge | raidforge-mono
+
+  # Deprecated colour keys are accepted for backwards compatibility and ignored.
+  # background: "#002B49"
+  # foreground: "#E6F4FA"
+  # accent: "#4FC3F7"
+  # danger: "#FF5252"
+  # ok: "#66BB6A"
 
   # Still honoured: how often the status bar refreshes.
   refresh_interval: 1.0

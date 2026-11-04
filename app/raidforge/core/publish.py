@@ -35,8 +35,10 @@ from .report import UploadResult, upload_session
 class PublishOptions:
     """How one publish attempt should behave."""
 
-    phase: str = "exit"  # "run" | "exit"
+    phase: str = "exit"  # "run" | "exit" | "manifest"
     upload: bool = False
+    #: Build the DOCX.  ``False`` only re-hashes/updates the manifest.
+    build_report: bool = True
     queue_on_failure: bool = True
     budget_seconds: Optional[float] = None
     skip_route_wait: bool = False
@@ -217,7 +219,7 @@ def publish(source: Any, options: PublishOptions, status: Callable[[str], None])
     report_generated_at: Optional[str] = inherited.get("report_generated_at")
     report_error = ""
 
-    if runs:
+    if runs and options.build_report:
         status(f"report: building {len(runs)} run(s) ...")
         try:
             report_path = build_erase_report(

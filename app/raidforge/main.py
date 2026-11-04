@@ -165,16 +165,17 @@ def _console(message: str) -> None:
         pass
 
 
-def finalize_session(ctx: AppContext) -> Dict[str, Any]:
-    """Publish the report/manifest and ship the session after the TUI exits.
+def finalize_session(ctx: AppContext, publish: bool = False) -> Dict[str, Any]:
+    """Finalise the evidence manifest.
 
-    The per-run publisher keeps the TUI responsive; this final pass waits for
-    that worker (bounded), then re-hashes the complete ``session.cast`` and
-    uploads the authoritative session.  Queueing on failure is allowed here
-    because the directory has stopped changing.
+    Report generation and upload are part of the erase task, not application
+    exit.  By default this only waits for background work and re-hashes the
+    finished session.  ``publish=True`` is retained for legacy callers/tests
+    that explicitly want the old report/upload pass.
 
     Args:
         ctx: Shared context holding the evidence session.
+        publish: Also build the report and upload the session.
 
     Returns:
         The final manifest dict (handy for logging / tests).
@@ -185,14 +186,24 @@ def finalize_session(ctx: AppContext) -> Dict[str, Any]:
     if not ctx.wait_idle(5.0):
         log.info("background publisher still running after 5s - waiting for the publish lock")
 
-    options = PublishOptions(
-        phase="exit",
-        upload=ctx.cfg.report.enabled and not is_inner_process(),
-        queue_on_failure=True,
-        budget_seconds=ctx.cfg.report.exit_upload_seconds,
-        skip_route_wait=ctx.network_ready,
-        on_status=lambda line: _console(f"  {line}"),
-    )
+    if publish:
+        options = PublishOptions(
+            phase="exit",
+            upload=ctx.cfg.report.enabled and not is_inner_process(),
+            queue_on_failure=True,
+            budget_seconds=ctx.cfg.report.exit_upload_seconds,
+            skip_route_wait=ctx.network_ready,
+            on_status=lambda line: _console(f"  {line}"),
+        )
+    else:
+        options = PublishOptions(
+            phase="manifest",
+            upload=False,
+            build_report=False,
+            queue_on_failure=False,
+            skip_route_wait=True,
+            on_status=lambda line: _console(f"  {line}"),
+        )
     outcome = publish_from_context(ctx, options)
     if outcome.report_path is not None:
         _console(f"  report: {outcome.report_path.name}")
@@ -230,7 +241,7 @@ def run_direct(ctx: AppContext) -> int:
 
     app = create_app(ctx)
     app.run(mouse=False)
-    manifest = finalize_session(ctx)
+    manifest = finalize_session(ctx, publish=False)
     log.info("session %s finalised with %s files", ctx.evidence.session_id, manifest.get("file_count"))
     return EXIT_OK
 
@@ -243,7 +254,7 @@ def run_wrapped(ctx: AppContext, args: argparse.Namespace) -> int:
     ctx.evidence.emit("recording_started", recorder=ctx.cfg.evidence.recorder, argv=inner_argv)
     code = run_recorded(inner_argv, ctx.evidence.cast_path, ctx.cfg)
     ctx.evidence.emit("recording_finished", exit_code=code)
-    manifest = finalize_session(ctx)
+    manifest = finalize_session(ctx, publish=False)
     log.info("session %s finalised with %s files", ctx.evidence.session_id, manifest.get("file_count"))
     return EXIT_OK if code == 0 else EXIT_APP_ERROR
 
@@ -366,12 +377,12 @@ def main(argv: Optional[List[str]] = None) -> int:
         return run_direct(ctx)
     except KeyboardInterrupt:  # pragma: no cover
         ctx.evidence.emit("interrupted")
-        finalize_session(ctx)
+        finalize_session(ctx, publish=False)
         return EXIT_APP_ERROR
     except Exception as exc:  # pragma: no cover
         ctx.evidence.emit("fatal", error=str(exc))
         logging.exception("fatal error")
-        finalize_session(ctx)
+        finalize_session(ctx, publish=False)
         return EXIT_APP_ERROR
 
 

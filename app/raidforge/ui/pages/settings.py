@@ -48,13 +48,20 @@ class SettingsPage(StatefulPage):
         self.call_after_refresh(self._show, "connection")
 
     def hotkeys(self) -> List[HotkeyHint]:
-        return [
+        hints = [
             HotkeyHint("Enter", "save"),
             HotkeyHint("Tab", "field"),
             HotkeyHint("F5", "refresh"),
-            HotkeyHint("Ctrl+P", "commands"),
             HotkeyHint("Esc", "back"),
+            HotkeyHint("Ctrl+Q", "quit"),
         ]
+        try:
+            width = self.app.size.width
+        except Exception:  # pragma: no cover - not mounted yet
+            width = 80
+        if width >= 100:
+            hints.append(HotkeyHint("Ctrl+P", "commands"))
+        return hints
 
     def focus_primary(self) -> None:
         try:
@@ -138,7 +145,6 @@ class SettingsPage(StatefulPage):
             Static(f"ssh endpoint       : {report.ssh_host or '-'}:{report.ssh_port}"),
             Static(f"http endpoint      : {report.http_base_url or '-'}"),
             Static(f"run upload budget  : {report.run_upload_seconds:.0f}s"),
-            Static(f"exit upload budget : {report.exit_upload_seconds:.0f}s"),
             Static(f"pending queue      : {report.pending_root}"),
             Static("These values are read-only here; edit config.yaml for factory defaults.", classes="muted"),
         )
@@ -157,9 +163,13 @@ class SettingsPage(StatefulPage):
         )
 
     async def _show_appearance(self, form: VerticalScroll) -> None:
-        current = self.state.cfg.ui.theme or "auto"
+        current = self.state.cfg.ui.theme or "raidforge"
         theme = Select(
-            [("Auto (console-safe)", "auto"), ("Deep blue 7.2", "raidforge"), ("Mono (16 colour)", "raidforge-mono")],
+            [
+                ("Auto (deep blue)", "auto"),
+                ("Deep blue 7.2", "raidforge"),
+                ("Mono (16 colour console)", "raidforge-mono"),
+            ],
             value=current,
             allow_blank=False,
             id="settings-theme",
@@ -169,8 +179,8 @@ class SettingsPage(StatefulPage):
             Label("[b]Theme[/b]"),
             theme,
             Static(
-                "Auto selects the deep-blue palette on a colour terminal and the "
-                "monochrome palette on TERM=linux / fbcon.",
+                "Auto always uses the deep-blue palette. Choose Mono only when the "
+                "16-colour VGA/fbcon console makes dark backgrounds invisible.",
                 classes="muted",
             ),
             Static(f"active theme: {self.app.theme}", id="settings-active-theme", classes="muted"),

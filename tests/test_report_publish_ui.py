@@ -204,7 +204,7 @@ def test_each_run_publishes_before_quit(tmp_path, monkeypatch):
     asyncio.run(scenario())
 
     # Exit path publishes again and is allowed to queue.
-    manifest = finalize_session(ctx)
+    manifest = finalize_session(ctx, publish=True)
     assert "report_file" in manifest, sorted(manifest.keys())
     assert len(manifest["erase_runs"]) == 2
     assert uploads.calls[-1]["queue_on_failure"] is True

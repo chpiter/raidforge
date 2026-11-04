@@ -9,7 +9,7 @@ from textual.screen import Screen
 from textual.widgets import DataTable, Static
 
 from ...core.models import RaidAction
-from ..focus import capture_focus
+from ..focus import FocusLabelMixin, capture_focus
 from ..models import ConfirmRequest, HotkeyHint, RefreshScope, TaskKind
 from ..state import AppState
 from ..tasks import make_task, raid_job, refresh_job
@@ -19,7 +19,7 @@ from ..widgets.hotkey_bar import HotkeyBar
 from ..widgets.tables import VolumeTable
 
 
-class ControllerDetailScreen(Screen):
+class ControllerDetailScreen(FocusLabelMixin, Screen):
     BINDINGS = [
         Binding("escape", "back", "Back", show=False),
         Binding("f5", "refresh", "Refresh", show=False),

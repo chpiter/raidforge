@@ -13,14 +13,14 @@ from rich.style import Style
 from rich.text import Text
 from textual.binding import Binding
 
-from ...core.models import DiskInfo
-from ..models import ICON_SELECTED, LayoutMode
-from ..palette import THEME_MONO
+from ...core.models import DiskInfo, Vendor
+from ..models import LayoutMode
+from ..palette import THEME_MONO, colour_for
 from .keyboard_table import KeyboardTable
 
 #: (label, width, key)
 STANDARD_COLUMNS: List[Tuple[str, int, str]] = [
-    ("", 2, "sel"),
+    ("Sel", 3, "sel"),
     ("ID", 10, "id"),
     ("Ctl", 4, "ctrl"),
     ("Loc", 6, "loc"),
@@ -32,7 +32,7 @@ STANDARD_COLUMNS: List[Tuple[str, int, str]] = [
 ]
 
 WIDE_COLUMNS: List[Tuple[str, int, str]] = [
-    ("", 2, "sel"),
+    ("Sel", 3, "sel"),
     ("ID", 10, "id"),
     ("Ctl", 4, "ctrl"),
     ("Loc", 6, "loc"),
@@ -47,9 +47,10 @@ WIDE_COLUMNS: List[Tuple[str, int, str]] = [
 ]
 
 SEL_COL = "sel"
-CHECKED = ICON_SELECTED
-UNCHECKED = "○"
-BLOCKED = "—"
+#: The console font has no U+2713; an ASCII checkbox renders everywhere.
+CHECKED = "[x]"
+UNCHECKED = " "
+BLOCKED = " "
 
 
 class MultiSelectTable(KeyboardTable):
@@ -142,15 +143,26 @@ class MultiSelectTable(KeyboardTable):
             self.move_cursor(row=index)
             self._notify_cursor(self._row_keys[index])
 
+    def _theme_name(self) -> str:
+        return str(getattr(self.app, "theme", "") or "")
+
+    def _sel_text(self, selected: bool, can_select: bool) -> Text:
+        """Checkbox cell: a green tick or a blank, never a vague symbol."""
+
+        theme = self._theme_name()
+        if selected:
+            return Text(CHECKED, style=Style(color=colour_for("ok", theme), bold=True))
+        style = Style(dim=True) if not can_select and theme != THEME_MONO else None
+        return Text(UNCHECKED if can_select else BLOCKED, style=style)
+
     def _cells_for(self, disk: DiskInfo, selected: bool, can_select: bool, reason: str) -> Dict[str, Text]:
-        mono = getattr(self.app, "theme", "") == THEME_MONO
+        mono = self._theme_name() == THEME_MONO
         dim = Style(dim=True) if not mono else Style()
         try:
             vd_text = str(self._vd_for(disk) or ("free" if can_select else "blocked"))
         except Exception:  # pragma: no cover - display callbacks must not break the table
             vd_text = "free" if can_select else "blocked"
         raw = {
-            "sel": CHECKED if selected else (UNCHECKED if can_select else BLOCKED),
             "id": disk.disk_id,
             "ctrl": f"c{disk.controller_index}",
             "loc": disk.location,
@@ -160,11 +172,13 @@ class MultiSelectTable(KeyboardTable):
             "fw": disk.firmware_or_raid or "-",
             "serial": disk.serial or "-",
             "size": disk.size_human,
-            "state": disk.firmware_or_raid or "-",
+            "state": disk.raid_state or ("direct" if disk.vendor is Vendor.GENERIC else "-"),
             "vd": vd_text,
         }
         style = None if can_select else dim
-        return {key: Text(str(value), style=style) for key, value in raw.items()}
+        cells = {key: Text(str(value), style=style) for key, value in raw.items()}
+        cells["sel"] = self._sel_text(selected, can_select)
+        return cells
 
     # -- selection ----------------------------------------------------------
     @property
@@ -194,7 +208,7 @@ class MultiSelectTable(KeyboardTable):
             return reason or f"disk {disk.disk_id}: selection forbidden"
         selected = not bool(meta.get("selected"))
         meta["selected"] = selected
-        self.update_cell(key, SEL_COL, Text(CHECKED if selected else UNCHECKED))
+        self.update_cell(key, SEL_COL, self._sel_text(selected, True))
         self._notify(f"{disk.disk_id} {'selected' if selected else 'deselected'}")
         self._notify_cursor(key)
         return f"{disk.disk_id} {'selected' if selected else 'deselected'}"
@@ -207,7 +221,7 @@ class MultiSelectTable(KeyboardTable):
             if not can_select:
                 continue
             meta["selected"] = True
-            self.update_cell(key, SEL_COL, Text(CHECKED))
+            self.update_cell(key, SEL_COL, self._sel_text(True, True))
         self._notify(f"{len(self.selected_ids)} disk(s) selected")
         return len(self.selected_ids)
 
@@ -220,7 +234,7 @@ class MultiSelectTable(KeyboardTable):
                 continue
             meta["selected"] = not bool(meta.get("selected"))
             self.update_cell(
-                key, SEL_COL, Text(CHECKED if meta["selected"] else UNCHECKED)
+                key, SEL_COL, self._sel_text(bool(meta["selected"]), True)
             )
         self._notify(f"{len(self.selected_ids)} disk(s) selected")
         return len(self.selected_ids)
@@ -231,7 +245,7 @@ class MultiSelectTable(KeyboardTable):
             disk: DiskInfo = meta["disk"]  # type: ignore[assignment]
             can_select, _reason = self.allowed(disk)
             meta["selected"] = False
-            self.update_cell(key, SEL_COL, Text(UNCHECKED if can_select else BLOCKED))
+            self.update_cell(key, SEL_COL, self._sel_text(False, can_select))
         self._notify("selection cleared")
 
     # -- cursor -------------------------------------------------------------

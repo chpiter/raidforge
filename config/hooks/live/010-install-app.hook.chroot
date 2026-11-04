@@ -178,10 +178,9 @@ evidence:
   root: /var/log/raidforge-evidence
   record_session: true
 ui:
-  # Palette is fixed to black/white in the code (see README 6.1.1).  These keys
-  # are kept only so older site configs keep loading; they are ignored.
-  background: "#000000"
-  foreground: "#FFFFFF"
+  # Deep blue is the default on every terminal.  Monochrome is opt-in only
+  # (theme: raidforge-mono or RAIDFORGE_THEME=mono for 16-colour consoles).
+  theme: "raidforge"
   refresh_interval: 1.0
 YAML
 chmod 0644 /etc/raidforge/config.yaml

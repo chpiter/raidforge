@@ -251,11 +251,13 @@ def run(args) -> int:
             # unreachable IP must not freeze the console, and saving must show
             # a result (the screen digest changes after Enter).
             log(f"dashboard -> settings, save {args.settings_ip}")
-            press(monitor, out_dir, "s", args.key_wait)
-            # The IPv4 field has a blinking cursor, so strict frame equality
-            # never settles; the blink-aware rule accepts the two cursor states.
+            # NavBar owns focus at startup: End selects Settings, Enter opens it.
+            press(monitor, out_dir, "end ret", args.key_wait)
             wait_for_stable_screen(monitor, out_dir, 30.0, 2.0,
                                    prefix="01a-settings", blink=True)
+            # Settings focuses the category list first; Tab twice reaches the
+            # transport Select and then the receiver-IP Input.
+            press(monitor, out_dir, "tab tab", args.key_wait)
             for _ in range(24):
                 monitor.command("sendkey backspace", wait=0.05)
             for char in args.settings_ip:
@@ -270,10 +272,16 @@ def run(args) -> int:
                     "may have blocked the UI")
             monitor.command("sendkey esc", wait=1.0)
             wait_for_stable_screen(monitor, out_dir, 20.0, 2.0, prefix="01d-back-to-dashboard")
+            # Home switches straight back to Dashboard and keeps NavBar focus;
+            # do not press Enter here or focus would move into the page.
+            press(monitor, out_dir, "home", args.key_wait)
+            wait_for_stable_screen(monitor, out_dir, 20.0, 2.0, prefix="01e-dashboard")
 
-        log("dashboard -> disk list")
-        press(monitor, out_dir, "ret", args.key_wait)
-        screendump(monitor, out_dir, "02-disk-list")
+        log("dashboard -> physical")
+        # NavBar starts on Dashboard; Right twice selects Physical, Enter opens.
+        press(monitor, out_dir, "right right ret", args.key_wait)
+        wait_for_stable_screen(monitor, out_dir, 30.0, 2.0, prefix="02-physical")
+        screendump(monitor, out_dir, "02-physical")
 
         rounds = max(1, int(args.erase_rounds))
         for round_index in range(1, rounds + 1):
@@ -282,18 +290,14 @@ def run(args) -> int:
                 log("select the first disk")
                 press(monitor, out_dir, "spc", args.key_wait)
             else:
-                # Back from the finished progress screen, clear and re-select:
-                # this exercises the multi-run path the DOCX report summarises.
-                log(f"round {round_index}/{rounds}: back to the disk list")
-                press(monitor, out_dir, "esc", args.key_wait)
-                wait_for_stable_screen(monitor, out_dir, 30.0, 2.0,
-                                       prefix=f"05a-back-to-disks-r{round_index}")
-                press(monitor, out_dir, "n", args.key_wait)
+                # The shell stays on Physical after the task; selection is
+                # cleared when the erase is queued, so Space selects again.
+                log(f"round {round_index}/{rounds}: select the first disk again")
                 press(monitor, out_dir, "spc", args.key_wait)
             screendump(monitor, out_dir, f"03-selected{suffix}")
 
             log(f"round {round_index}/{rounds}: open the confirmation dialog")
-            press(monitor, out_dir, "ret", args.key_wait)
+            press(monitor, out_dir, "f8", args.key_wait)
             screendump(monitor, out_dir, f"04-confirm{suffix}")
 
             log("type yes and submit")
@@ -303,14 +307,14 @@ def run(args) -> int:
             time.sleep(args.submit_wait)
             screendump(monitor, out_dir, f"05-progress{suffix}")
 
-        log("quit the TUI (Q, twice: first may cancel a live run, second exits)")
-        monitor.command("sendkey q", wait=args.key_wait)
+        log("quit the TUI (Ctrl+Q twice: first may cancel a live run, second exits)")
+        monitor.command("sendkey ctrl-q", wait=args.key_wait)
         time.sleep(args.exit_wait / 2)
         screendump(monitor, out_dir, "06-after-quit")
-        # Press Q again: if the run was still active the first Q only cancelled
-        # it (by design), and if it had already finished the first Q exited and
-        # this one just hits the menu's "unknown choice" - both are harmless.
-        monitor.command("sendkey q", wait=args.key_wait)
+        # Press Ctrl+Q again: if the run was still active the first press only
+        # cancelled it (by design); if it had already finished the first press
+        # exited and this one just hits the menu's "unknown choice".
+        monitor.command("sendkey ctrl-q", wait=args.key_wait)
 
         # The app may spend up to ~30s uploading evidence before the menu
         # appears; keystrokes sent meanwhile sit in the tty line buffer with
@@ -359,7 +363,9 @@ def main() -> int:
     parser.add_argument("--interval", type=float, default=8.0)
     parser.add_argument("--key-wait", type=float, default=1.2)
     parser.add_argument("--key-slow", type=float, default=0.6)
-    parser.add_argument("--submit-wait", type=float, default=12.0)
+    parser.add_argument("--submit-wait", type=float, default=45.0,
+                        help="wait after submitting; the erase job now also builds "
+                             "the report and attempts the upload before it finishes")
     parser.add_argument("--erase-rounds", type=int, default=1,
                         help="drive this many erase runs before quitting; round 2+ "
                              "returns to the disk list and clears/reselects the disk "

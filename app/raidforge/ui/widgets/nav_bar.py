@@ -3,6 +3,10 @@
 The active tab uses Textual 7.5.0's ``border: tab`` (a three-row border).  The
 bar itself is the only focusable element; individual tabs are non-focusable so
 Tab does not walk through all seven of them.
+
+Left/Right (and Home/End) switch pages immediately and keep the NavBar focused,
+so repeated arrows keep moving through the tabs.  Enter moves focus into the
+current page; Esc from the content returns focus here.
 """
 
 from __future__ import annotations
@@ -27,7 +31,7 @@ NAV_PAGES = (
 
 
 class NavItem(Static):
-    """One tab; activation is driven by NavBar's Enter binding."""
+    """One tab; the NavBar owns switching and focus."""
 
     def __init__(self, page: PageId) -> None:
         super().__init__(f" {page.title} ", id=f"nav-{page.value}", classes="nav-item")
@@ -82,20 +86,40 @@ class NavBar(Horizontal):
         return items[self.cursor_index].page
 
     # -- actions ------------------------------------------------------------
+    def _switch(self, index: int) -> None:
+        """Move the tab cursor and switch immediately, keeping NavBar focus."""
+
+        self.set_cursor(index)
+        self.post_message(
+            NavigateRequested(
+                self.cursor_page,
+                push_history=False,
+                focus_content=False,
+            )
+        )
+
     def action_cursor_prev(self) -> None:
-        self.set_cursor(self.cursor_index - 1)
+        self._switch(self.cursor_index - 1)
 
     def action_cursor_next(self) -> None:
-        self.set_cursor(self.cursor_index + 1)
+        self._switch(self.cursor_index + 1)
 
     def action_cursor_first(self) -> None:
-        self.set_cursor(0)
+        self._switch(0)
 
     def action_cursor_last(self) -> None:
-        self.set_cursor(len(self.items()) - 1)
+        self._switch(len(self.items()) - 1)
 
     def action_activate(self) -> None:
-        self.post_message(NavigateRequested(self.cursor_page))
+        """Enter: move focus into the current page without changing tabs."""
+
+        self.post_message(
+            NavigateRequested(
+                self.cursor_page,
+                push_history=False,
+                focus_content=True,
+            )
+        )
 
 
 __all__ = ["NAV_PAGES", "NavBar", "NavItem"]

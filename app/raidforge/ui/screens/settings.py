@@ -308,8 +308,8 @@ class SettingsScreen(BaseScreen):
             self._error.update(f"cannot write {config_mod.SITE_OVERRIDE_PATH}: {exc}")
             return
 
-        # report.py reads cfg.report at call time, so the post-exit upload and
-        # the pending-queue retries pick this up without a restart.
+        # report.py reads cfg.report at call time, so the next erase upload and
+        # pending-queue retries pick this up without a restart.
         self.ctx.cfg.report.transport = self._transport
         self.ctx.cfg.report.ssh_host = host
         self.ctx.cfg.report.ssh_port = self._ports["ssh"]

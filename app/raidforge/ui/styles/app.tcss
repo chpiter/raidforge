@@ -72,18 +72,26 @@ Screen {
 }
 
 .nav-item.-cursor {
-    background: $surface;
+    background: $focus-blurred;
     color: $foreground;
     text-style: bold;
 }
 
 .nav-item.-active.-cursor {
-    background: $nav-active-bg;
-    color: $nav-active-fg;
+    background: $focus-blurred;
+    color: $foreground;
 }
 
 #nav-bar:focus .nav-item.-active {
-    border: tab $accent;
+    background: $background;
+    color: $foreground;
+    border: tab $focus;
+}
+
+#nav-bar:focus .nav-item.-cursor {
+    background: $focus;
+    color: $focus-foreground;
+    border: tab $focus;
 }
 
 #breadcrumb {
@@ -334,6 +342,27 @@ Screen {
     margin: 0;
 }
 
+#physical-filters Input:focus,
+#virtual-filters Input:focus {
+    height: 1;
+    border: none;
+    background: $focus;
+    color: $focus-foreground;
+}
+
+#physical-filters Input:focus > .input--placeholder,
+#virtual-filters Input:focus > .input--placeholder {
+    color: $focus-foreground;
+}
+
+#physical-filters Select:focus SelectCurrent,
+#virtual-filters Select:focus SelectCurrent {
+    height: 1;
+    border: none;
+    background: $focus;
+    color: $focus-foreground;
+}
+
 #filter-count {
     width: 7;
     height: 1;
@@ -394,6 +423,22 @@ Screen {
     background: $background;
     color: $foreground;
     padding: 0 1;
+}
+
+#task-log:focus {
+    border-left: solid $focus;
+}
+
+Tree > .tree--cursor {
+    background: $focus-blurred;
+    color: $foreground;
+    text-style: bold;
+}
+
+Tree:focus > .tree--cursor {
+    background: $focus;
+    color: $focus-foreground;
+    text-style: bold;
 }
 
 /* -- evidence ----------------------------------------------------------- */
@@ -493,10 +538,21 @@ DataTable > .datatable--even-row {
     background: $background;
 }
 
-DataTable > .datatable--cursor,
+DataTable > .datatable--cursor {
+    background: $focus-blurred;
+    color: $foreground;
+    text-style: bold;
+}
+
 DataTable:focus > .datatable--cursor {
-    background: $accent;
-    color: $background;
+    background: $focus;
+    color: $focus-foreground;
+    text-style: bold;
+}
+
+DataTable:focus > .datatable--header {
+    background: $focus;
+    color: $focus-foreground;
     text-style: bold;
 }
 
@@ -505,8 +561,6 @@ DataTable > .datatable--hover {
 }
 
 DataTable:focus,
-DataTable:focus > .datatable--header,
-DataTable:focus > .datatable--cursor,
 Input:focus,
 Button:focus,
 Select:focus,
@@ -522,9 +576,20 @@ OptionList {
     color: $foreground;
 }
 
+OptionList:focus {
+    border: none;
+}
+
 OptionList > .option-list--option-highlighted {
-    background: $surface;
-    color: $accent;
+    background: $focus-blurred;
+    color: $foreground;
+    text-style: bold;
+}
+
+OptionList:focus > .option-list--option-highlighted {
+    background: $focus;
+    color: $focus-foreground;
+    text-style: bold;
 }
 
 SelectCurrent {
@@ -549,7 +614,13 @@ Input {
 }
 
 Input:focus {
-    border: tall $accent;
+    background: $focus;
+    color: $focus-foreground;
+    border: tall $focus;
+}
+
+Input:focus > .input--placeholder {
+    color: $focus-foreground;
 }
 
 Input > .input--placeholder {
@@ -570,9 +641,10 @@ Button:hover {
 }
 
 Button:focus {
-    background: $panel;
-    color: $accent;
-    text-style: bold reverse;
+    background: $focus;
+    color: $focus-foreground;
+    border: tall $focus;
+    text-style: bold;
 }
 
 Button.-error {
@@ -589,8 +661,17 @@ Select {
     border: tall $border;
 }
 
-Select:focus {
-    border: tall $accent;
+Select:focus SelectCurrent {
+    background: $focus;
+    color: $focus-foreground;
+    border: none;
+}
+
+Select:focus .arrow,
+Select:focus .down-arrow,
+Select:focus .up-arrow {
+    color: $focus-foreground;
+    background: $focus;
 }
 
 SelectOverlay {

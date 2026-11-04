@@ -1,8 +1,9 @@
-"""Two palettes: the 7.2 deep-blue theme and the 16-colour console fallback.
+"""Two palettes: the default 7.2 deep-blue theme and an explicit mono option.
 
 All colours live here so TCSS, Rich `Text` styles and the Textual `Theme`
 objects cannot drift apart.  The stylesheet itself only references variables;
-switching to ``raidforge-mono`` turns every variable black or white.
+switching to ``raidforge-mono`` turns every variable black or white.  The
+mono palette is never selected automatically from ``TERM``.
 """
 
 from __future__ import annotations
@@ -28,6 +29,8 @@ BLUE_BORDER = "#1E6A96"
 BLUE_ZEBRA = "#013451"
 BLUE_NAV_ACTIVE = "#0066A1"
 BLUE_NAV_ACTIVE_FG = "#FFFFFF"
+#: High-contrast focus colour, deliberately distinct from the cyan accent.
+BLUE_FOCUS = "#FFC107"
 
 #: The shipped 16-colour console only trusts pure black and white.
 MONO_BG = "#000000"
@@ -127,15 +130,23 @@ _STYLE_VARS = {
     "block-cursor-text-style": "bold",
     "block-cursor-blurred-text-style": "bold",
     "input-cursor-text-style": "bold",
-    "button-focus-text-style": "bold reverse",
+    "button-focus-text-style": "bold",
 }
 
 #: Application-specific variables referenced by app.tcss.
 _APP_VARS_BLUE = {
+    "focus": BLUE_FOCUS,
+    "focus-foreground": BLUE_BG,
+    "focus-blurred": BLUE_SURFACE,
+    "block-cursor-background": BLUE_FOCUS,
+    "block-cursor-foreground": BLUE_BG,
+    "block-cursor-blurred-background": BLUE_SURFACE,
+    "block-cursor-blurred-foreground": BLUE_FG,
+    "input-cursor-background": BLUE_BG,
     "nav-bg": BLUE_PANEL,
     "nav-active-bg": BLUE_NAV_ACTIVE,
     "nav-active-fg": BLUE_NAV_ACTIVE_FG,
-    "nav-tab-border": BLUE_ACCENT,
+    "nav-tab-border": BLUE_BORDER,
     "nav-hover-bg": BLUE_SURFACE,
     "table-zebra": BLUE_ZEBRA,
     "card-server": BLUE_ACCENT,
@@ -152,6 +163,14 @@ _APP_VARS_BLUE = {
 }
 
 _APP_VARS_MONO = {
+    "focus": MONO_FG,
+    "focus-foreground": MONO_BG,
+    "focus-blurred": MONO_BG,
+    "block-cursor-background": MONO_FG,
+    "block-cursor-foreground": MONO_BG,
+    "block-cursor-blurred-background": MONO_BG,
+    "block-cursor-blurred-foreground": MONO_FG,
+    "input-cursor-background": MONO_BG,
     "nav-bg": MONO_BG,
     "nav-active-bg": MONO_FG,
     "nav-active-fg": MONO_BG,
@@ -251,11 +270,12 @@ def mono_theme():
 
 
 def select_theme_name(configured: str = "auto", env: Optional[Dict[str, str]] = None) -> str:
-    """Pick a theme from config, an explicit override, or the console type.
+    """Pick a theme from config or an explicit override.
 
-    ``TERM=linux`` means the bare VGA/fbcon console where #002B49 is quantised
-    to bright black and can disappear.  That is the documented failure this
-    fallback exists to prevent.
+    The deep-blue palette is the default on every terminal.  ``auto`` is kept
+    as a backwards-compatible alias for blue; monochrome is only selected when
+    the operator asks for it explicitly (config, ``RAIDFORGE_THEME=mono`` or
+    ``RAIDFORGE_MONO=1``).
     """
 
     env = dict(os.environ if env is None else env)
@@ -269,12 +289,15 @@ def select_theme_name(configured: str = "auto", env: Optional[Dict[str, str]] = 
         return THEME_MONO
     if choice in ("blue", THEME_BLUE):
         return THEME_BLUE
-    term = (env.get("TERM") or "").lower()
-    if term in ("linux", "fbterm") or term.startswith("fb"):
-        return THEME_MONO
     if env.get("RAIDFORGE_MONO") == "1":
         return THEME_MONO
     return THEME_BLUE
+
+
+def focus_colour(theme_name: str = THEME_BLUE) -> str:
+    """High-contrast focus colour; mono stays pure white."""
+
+    return MONO_FG if theme_name == THEME_MONO else BLUE_FOCUS
 
 
 _STATUS_COLOURS_BLUE = {
@@ -321,6 +344,7 @@ def colour_for(kind: str, theme_name: str = THEME_BLUE) -> str:
         "selected": BLUE_ACCENT,
         "danger": BLUE_DANGER,
         "accent": BLUE_ACCENT,
+        "focus": BLUE_FOCUS,
         "muted": BLUE_MUTED,
     }.get(kind, BLUE_FG)
 
@@ -331,6 +355,7 @@ __all__ = [
     "BLUE_BORDER",
     "BLUE_DANGER",
     "BLUE_FG",
+    "BLUE_FOCUS",
     "BLUE_MUTED",
     "BLUE_NAV_ACTIVE",
     "BLUE_NAV_ACTIVE_FG",
@@ -344,6 +369,7 @@ __all__ = [
     "THEME_BLUE",
     "THEME_MONO",
     "colour_for",
+    "focus_colour",
     "mono_theme",
     "raidforge_theme",
     "select_theme_name",

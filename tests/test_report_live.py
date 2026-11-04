@@ -164,7 +164,7 @@ def test_two_rounds_produce_one_report(tmp_path, monkeypatch):
     assert ("confirm", 1) in tagged and ("progress", 1) in tagged
     assert ("confirm", 2) in tagged and ("progress", 2) in tagged
 
-    manifest = finalize_session(ctx)
+    manifest = finalize_session(ctx, publish=True)
     reports = list(ctx.evidence.root.glob("*-raidforge-report-*.docx"))
     assert len(reports) == 1, [path.name for path in reports]
     assert manifest["report_file"] == reports[0].name

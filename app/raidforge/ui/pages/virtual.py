@@ -33,15 +33,23 @@ class VirtualPage(StatefulPage):
 
     def hotkeys(self) -> List[HotkeyHint]:
         view = self._selected_view()
+        busy = self.active_task_running()
         can_delete = bool(view and self.state.raid_capabilities(view.controller_index).delete_vd)
-        return [
+        hints = [
             HotkeyHint("Enter", "members", enabled=view is not None),
-            HotkeyHint("F7", "create", danger=True, enabled=not self.active_task_running()),
-            HotkeyHint("F9", "delete", danger=True, enabled=can_delete and not self.active_task_running()),
-            HotkeyHint("F5", "refresh", enabled=not self.active_task_running()),
+            HotkeyHint("F7", "create", danger=True, enabled=not busy),
+            HotkeyHint("F9", "delete", danger=True, enabled=can_delete and not busy),
+            HotkeyHint("F5", "refresh", enabled=not busy),
             HotkeyHint("/", "search"),
-            HotkeyHint("Ctrl+P", "commands"),
+            HotkeyHint("Ctrl+Q", "cancel" if busy else "quit"),
         ]
+        try:
+            width = self.app.size.width
+        except Exception:  # pragma: no cover - not mounted yet
+            width = 80
+        if width >= 100:
+            hints.append(HotkeyHint("Ctrl+P", "commands"))
+        return hints
 
     def focus_primary(self) -> None:
         try:
@@ -182,7 +190,7 @@ class VirtualPage(StatefulPage):
 
     def action_delete(self) -> None:
         if self.active_task_running():
-            self.toast("a task is already running")
+            self.toast("a task is already running - Ctrl+Q cancels", "warn")
             return
         view = self._selected_view()
         if view is None:

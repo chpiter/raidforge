@@ -341,7 +341,7 @@ def _two_run_context(tmp_path: Path) -> AppContext:
 
 def test_finalize_session_hashes_report_and_parent_inherits_it(tmp_path):
     ctx = _two_run_context(tmp_path)
-    manifest = finalize_session(ctx)
+    manifest = finalize_session(ctx, publish=True)
 
     name = manifest["report_file"]
     expected = report_filename("SNTEST01", ctx.evidence.started_at)
@@ -365,7 +365,7 @@ def test_finalize_session_hashes_report_and_parent_inherits_it(tmp_path):
     # Wrapper mode: the parent process has no in-memory history but re-finalises
     # to hash session.cast.  It must adopt the child's report, not drop it.
     parent = _context(tmp_path, session_id=ctx.evidence.session_id)
-    parent_manifest = finalize_session(parent)
+    parent_manifest = finalize_session(parent, publish=True)
     assert parent_manifest["report_file"] == name
     assert len(parent_manifest["erase_runs"]) == 2
     assert parent_manifest["tool"] == "storcli"
@@ -376,6 +376,16 @@ def test_finalize_session_hashes_report_and_parent_inherits_it(tmp_path):
     assert len(list(ctx.evidence.root.glob("*-raidforge-report-*.docx"))) == 1
     entries = {entry["path"]: entry for entry in parent_manifest["files"]}
     assert entries[name]["sha256"] == hashlib.sha256(report_bytes).hexdigest()
+
+
+def test_exit_finalizer_does_not_build_report_or_upload(tmp_path):
+    ctx = _two_run_context(tmp_path)
+    manifest = finalize_session(ctx, publish=False)
+
+    assert manifest["report_file"] is None
+    assert not list(ctx.evidence.root.glob("*-raidforge-report-*.docx"))
+    assert len(manifest["erase_runs"]) == 2
+    assert manifest["tool"] == "storcli"
 
 
 def test_attempts_pair_by_disk_id_not_position(tmp_path):
@@ -643,7 +653,7 @@ def test_report_failure_leaves_no_temp_file_and_is_logged(tmp_path, monkeypatch)
         raise RuntimeError("docx writer exploded")
 
     monkeypatch.setattr(erase_report, "_write_docx", _boom)
-    manifest = finalize_session(ctx)
+    manifest = finalize_session(ctx, publish=True)
 
     assert manifest["report_file"] is None
     leftovers = list(ctx.evidence.root.glob("*.docx")) + list(ctx.evidence.root.glob(".raidforge-report-*"))

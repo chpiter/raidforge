@@ -9,7 +9,7 @@ from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.widgets import DataTable
 
-from ...core.models import DiskInfo
+from ...core.models import DiskInfo, Vendor
 from ..messages import NavigateRequested
 from ..models import ConfirmRequest, HotkeyHint, PageId, RefreshScope, TaskKind
 from ..tasks import erase_job, make_task
@@ -41,16 +41,28 @@ class PhysicalPage(StatefulPage):
     def hotkeys(self) -> List[HotkeyHint]:
         has_selection = bool(self.state.physical_selection)
         busy = self.active_task_running()
-        return [
+        hints = [
             HotkeyHint("Space", "toggle"),
-            HotkeyHint("Enter", "confirm", enabled=has_selection and not busy),
-            HotkeyHint("Ctrl+A", "all"),
-            HotkeyHint("Ctrl+I", "invert"),
+            HotkeyHint("Enter", "confirm", enabled=not busy),
             HotkeyHint("F8", "erase", danger=True, enabled=has_selection and not busy),
             HotkeyHint("F5", "refresh", enabled=not busy),
             HotkeyHint("/", "search"),
-            HotkeyHint("Ctrl+P", "commands"),
+            HotkeyHint("Ctrl+Q", "cancel" if busy else "quit"),
         ]
+        try:
+            width = self.app.size.width
+        except Exception:  # pragma: no cover - not mounted yet
+            width = 80
+        if width >= 100:
+            hints.append(HotkeyHint("Ctrl+P", "commands"))
+        if width >= 130:
+            hints.extend(
+                [
+                    HotkeyHint("Ctrl+A", "all"),
+                    HotkeyHint("Ctrl+I", "invert"),
+                ]
+            )
+        return hints
 
     def focus_primary(self) -> None:
         try:
@@ -76,7 +88,7 @@ class PhysicalPage(StatefulPage):
             if f.media != "all" and disk.medium.value != f.media:
                 continue
             member = disk.disk_id in membership
-            blocked = bool(self.state.blocked_reason(disk))
+            blocked = bool(self.state.erase_blocked_reason(disk))
             if f.state == "free" and (member or blocked):
                 continue
             if f.state == "vd" and not member:
@@ -116,14 +128,14 @@ class PhysicalPage(StatefulPage):
         self.refresh_chrome()
 
     def _row_allowed(self, disk: DiskInfo):
-        reason = self.state.blocked_reason(disk)
+        reason = self.state.erase_blocked_reason(disk)
         return (not reason, reason)
 
     def _vd_label(self, disk: DiskInfo) -> str:
         membership = self.state.disk_membership().get(disk.disk_id)
         if membership:
             return membership
-        return "blocked" if self.state.blocked_reason(disk) else "free"
+        return "blocked" if self.state.erase_blocked_reason(disk) else "free"
 
     def _merge_visible_selection(self) -> None:
         table = self.query_one(MultiSelectTable)
@@ -151,8 +163,8 @@ class PhysicalPage(StatefulPage):
         self.refresh_chrome()
 
     def _drawer_text(self, disk: DiskInfo) -> Text:
-        reason = self.state.blocked_reason(disk)
-        eligibility = "selectable" if not reason else reason
+        erase_block = self.state.erase_blocked_reason(disk)
+        raid_block = self.state.blocked_reason(disk)
         text = Text()
         text.append(f"{disk.disk_id}", style="bold")
         text.append(f"  c{disk.controller_index}  {disk.location}  {disk.medium.value}  {disk.protocol.value}  {disk.size_human}\n")
@@ -161,13 +173,15 @@ class PhysicalPage(StatefulPage):
         text.append("Serial ", style="bold")
         text.append(f"{disk.serial or '-'}   ")
         text.append("FW ", style="bold")
-        text.append(f"{disk.firmware_or_raid or '-'}\n")
+        text.append(f"{disk.firmware or '-'}\n")
         text.append("State   ", style="bold")
-        text.append(f"{disk.raid_state or '-'}   ")
+        text.append(f"{disk.raid_state or ('direct' if disk.vendor is Vendor.GENERIC else '-')}   ")
         text.append("VD ", style="bold")
         text.append(f"{self.state.disk_membership().get(disk.disk_id, 'free')}   ")
-        text.append("Eligible ", style="bold")
-        text.append(eligibility)
+        text.append("Erase ", style="bold")
+        text.append("selectable" if not erase_block else erase_block)
+        text.append("\nRAID    ", style="bold")
+        text.append("free" if not raid_block else raid_block)
         return text
 
     # -- actions ------------------------------------------------------------
@@ -186,11 +200,19 @@ class PhysicalPage(StatefulPage):
             return
         if self.state.physical_selection:
             self.action_erase()
-        else:
-            try:
-                self.query_one(DetailDrawer).focus()
-            except Exception:  # pragma: no cover
-                pass
+            return
+        table = self.query_one(MultiSelectTable)
+        key = table.current_row_key
+        disk = self.state.disk_by_id(key) if key else None
+        if disk is None:
+            self.toast("no disk under the cursor", "warn")
+            return
+        reason = self.state.erase_blocked_reason(disk)
+        if reason:
+            self.toast(reason, "warn")
+            return
+        table.toggle_selection()
+        self.action_erase()
 
     def action_clear_search_or_back(self) -> None:
         bar = self.query_one(DiskFilterBar)
@@ -207,12 +229,17 @@ class PhysicalPage(StatefulPage):
 
     def action_erase(self) -> None:
         if self.active_task_running():
-            self.toast("a task is already running")
+            self.toast("a task is already running - Ctrl+Q cancels", "warn")
             return
         selected = [disk for disk in self.state.physical_disks if disk.disk_id in self.state.physical_selection]
         if not selected:
-            self.toast("select at least one disk first")
+            self.toast("select at least one disk first - Space toggles, Enter confirms", "warn")
             return
+        for disk in selected:
+            reason = self.state.erase_blocked_reason(disk)
+            if reason:
+                self.toast(f"{disk.disk_id}: {reason}", "warn")
+                return
         services = self.state.services
         try:
             plans, snapshot = services.plan_erase([disk.disk_id for disk in selected])  # type: ignore[union-attr]

@@ -8,7 +8,7 @@ from textual.containers import Vertical
 from textual.screen import Screen
 from textual.widgets import Static
 
-from ..focus import capture_focus
+from ..focus import FocusLabelMixin, capture_focus
 from ..models import HotkeyHint
 from ..state import AppState
 from ..widgets.breadcrumb import Breadcrumb
@@ -16,7 +16,7 @@ from ..widgets.disk_table import MultiSelectTable
 from ..widgets.hotkey_bar import HotkeyBar
 
 
-class VolumeMembersScreen(Screen):
+class VolumeMembersScreen(FocusLabelMixin, Screen):
     BINDINGS = [Binding("escape", "back", "Back", show=False)]
 
     def __init__(self, state: AppState, controller_index: int, volume_id: str) -> None:

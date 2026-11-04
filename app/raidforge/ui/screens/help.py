@@ -33,12 +33,13 @@ class HelpScreen(ModalScreen[None]):
     def _text(self) -> str:
         lines = [
             "Global",
-            "  Ctrl+1..7   go to Dashboard / Controllers / Physical / Virtual / Tasks / Evidence / Settings",
+            "  ← / →       switch tabs while the NavBar is focused",
+            "  Enter       enter the current page",
+            "  Esc         return to the NavBar / back / close",
             "  Ctrl+Q      quit (a running task is cancelled first)",
             "  Ctrl+P      command palette",
             "  F1          this help",
             "  F5          full refresh",
-            "  Esc         back / close",
             "",
             f"Context — {self.state.active_page.title}",
         ]

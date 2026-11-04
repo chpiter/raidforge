@@ -35,13 +35,6 @@ class RaidforgeApp(App[None]):
     AUTO_FOCUS = None
 
     BINDINGS = [
-        Binding("ctrl+1", "goto('dashboard')", "Dashboard", show=False, priority=True),
-        Binding("ctrl+2", "goto('controllers')", "Controllers", show=False, priority=True),
-        Binding("ctrl+3", "goto('physical')", "Physical", show=False, priority=True),
-        Binding("ctrl+4", "goto('virtual')", "Virtual", show=False, priority=True),
-        Binding("ctrl+5", "goto('tasks')", "Tasks", show=False, priority=True),
-        Binding("ctrl+6", "goto('evidence')", "Evidence", show=False, priority=True),
-        Binding("ctrl+7", "goto('settings')", "Settings", show=False, priority=True),
         Binding("ctrl+p", "palette", "Commands", show=False, priority=True),
         Binding("f1", "help", "Help", show=False),
         Binding("question_mark", "help", "Help", show=False),
@@ -177,10 +170,21 @@ class RaidforgeApp(App[None]):
             if not self.state.cancel_event.is_set():
                 if runner.cancel_active():  # type: ignore[union-attr]
                     self.state.evidence.emit("quit_requested", cancel_run=True)
+                    task = next(
+                        (item for item in self.state.task_queue if item.id == task_id),
+                        None,
+                    )
+                    title = task.title if task is not None else "task"
                     try:
-                        self.screen.post_message(
-                            Toast("cancelling - press Ctrl+Q again to exit", "warn")
-                        )
+                        main = self._main_screen()
+                        if main is not None:
+                            main.post_message(
+                                Toast(
+                                    f"cancelling {title} - press Ctrl+Q again to exit",
+                                    "warn",
+                                    timeout=8.0,
+                                )
+                            )
                     except Exception:  # pragma: no cover
                         pass
                     return

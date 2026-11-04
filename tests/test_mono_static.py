@@ -1,8 +1,8 @@
 """Palette guards for the two-theme design.
 
-The deep-blue theme is the 7.2 default.  The monochrome theme is the
-console-safe fallback: pure black and white only, selected automatically on
-``TERM=linux``.
+The deep-blue theme is always the default.  The monochrome theme is an explicit
+option for 16-colour consoles: pure black and white only, never selected from
+``TERM`` automatically.
 """
 
 from __future__ import annotations
@@ -35,7 +35,16 @@ def test_tcss_uses_only_theme_variables():
     css = theme_mod.build_css(load_config())
     literals = _colour_literals(css)
     assert not literals, f"hex colours belong in palette.py, found: {literals}"
-    for variable in ("$background", "$accent", "$error", "$nav-active-bg", "$table-zebra"):
+    for variable in (
+        "$background",
+        "$accent",
+        "$error",
+        "$focus",
+        "$focus-foreground",
+        "$focus-blurred",
+        "$nav-active-bg",
+        "$table-zebra",
+    ):
         assert variable in css
 
 
@@ -74,15 +83,22 @@ def test_mono_theme_is_black_and_white_only():
     assert not bad, f"non-monochrome mono theme variables: {bad}"
 
 
-def test_console_fallback_picks_mono():
+def test_auto_theme_is_deep_blue_even_on_linux_console():
     assert (
         palette_mod.select_theme_name("auto", {"TERM": "linux"})
-        == palette_mod.THEME_MONO
+        == palette_mod.THEME_BLUE
+    )
+    assert (
+        palette_mod.select_theme_name("", {"TERM": "fbterm"})
+        == palette_mod.THEME_BLUE
     )
     assert (
         palette_mod.select_theme_name("auto", {"TERM": "xterm-256color"})
         == palette_mod.THEME_BLUE
     )
+
+
+def test_explicit_mono_override_still_wins():
     assert (
         palette_mod.select_theme_name("auto", {"TERM": "xterm", "RAIDFORGE_THEME": "mono"})
         == palette_mod.THEME_MONO
@@ -91,6 +107,36 @@ def test_console_fallback_picks_mono():
         palette_mod.select_theme_name("raidforge-mono", {"TERM": "xterm-256color"})
         == palette_mod.THEME_MONO
     )
+    assert (
+        palette_mod.select_theme_name("auto", {"TERM": "xterm", "RAIDFORGE_MONO": "1"})
+        == palette_mod.THEME_MONO
+    )
+    assert (
+        palette_mod.select_theme_name("auto", {"TERM": "linux", "RAIDFORGE_THEME": "blue"})
+        == palette_mod.THEME_BLUE
+    )
+
+
+def test_uiconfig_default_theme_is_raidforge():
+    from raidforge.config import UiConfig
+
+    assert UiConfig().theme == "raidforge"
+    assert palette_mod.select_theme_name("auto") == palette_mod.THEME_BLUE
+
+
+def test_blue_theme_has_focus_variables():
+    theme = palette_mod.raidforge_theme()
+    assert theme.variables["focus"].upper() == palette_mod.BLUE_FOCUS
+    assert theme.variables["focus-foreground"].upper() == palette_mod.BLUE_BG
+    assert theme.variables["focus-blurred"].upper() == palette_mod.BLUE_SURFACE
+    assert theme.variables["block-cursor-background"].upper() == palette_mod.BLUE_FOCUS
+    assert theme.variables["nav-tab-border"].upper() == palette_mod.BLUE_BORDER
+
+
+def test_mono_focus_is_black_and_white():
+    theme = palette_mod.mono_theme()
+    for name in ("focus", "focus-foreground", "focus-blurred", "block-cursor-background"):
+        assert theme.variables[name].upper() in MONO_ALLOWED
 
 
 def test_theme_is_dark_and_flat():

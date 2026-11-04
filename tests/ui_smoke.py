@@ -30,6 +30,7 @@ for candidate in _candidates:
 else:  # pragma: no cover - misconfigured checkout
     raise SystemExit("cannot locate app/raidforge; set RAIDFORGE_APP_ROOT")
 
+from textual.coordinate import Coordinate  # noqa: E402
 from textual.widgets import ContentSwitcher, Input, Select  # noqa: E402
 
 from raidforge.config import load_config  # noqa: E402
@@ -37,12 +38,31 @@ from raidforge.core.evidence import EvidenceSession  # noqa: E402
 from raidforge.core.models import DiskInfo, Medium, Protocol, Vendor  # noqa: E402
 from raidforge.core.serverid import resolve_server_id  # noqa: E402
 from raidforge.ui.app import create_app  # noqa: E402
+from raidforge.ui.models import PageId  # noqa: E402
 from raidforge.ui.pages.physical import PhysicalPage  # noqa: E402
 from raidforge.ui.screens.confirm import ConfirmModal  # noqa: E402
 from raidforge.ui.screens.main import MainScreen  # noqa: E402
 from raidforge.ui.state import AppState  # noqa: E402
+from raidforge.ui.widgets.breadcrumb import Breadcrumb  # noqa: E402
 from raidforge.ui.widgets.disk_table import MultiSelectTable  # noqa: E402
-from raidforge.ui.widgets.nav_bar import NavItem  # noqa: E402
+from raidforge.ui.widgets.nav_bar import NavBar, NavItem  # noqa: E402
+
+PAGE_ORDER = list(PageId)
+
+
+async def nav_to(pilot, app, index: int, enter_content: bool = False) -> None:
+    nav = app.screen.query_one(NavBar)
+    nav.focus()
+    await pilot.pause(0.1)
+    await pilot.press("home")
+    await pilot.pause(0.1)
+    for _ in range(index):
+        await pilot.press("right")
+        await pilot.pause(0.05)
+    await pilot.pause(0.25)
+    if enter_content:
+        await pilot.press("enter")
+        await pilot.pause(0.25)
 
 
 async def main() -> int:
@@ -53,6 +73,7 @@ async def main() -> int:
             "evidence": {"root": "/tmp/ui-smoke-evidence"},
             "report": {"enabled": False},
             "tools": {"command_timeout": 5},
+            "ui": {"theme": "raidforge"},
         }
     )
     cfg.dry_run = True
@@ -85,13 +106,26 @@ async def main() -> int:
         if screen.query_one("#pages", ContentSwitcher).size.height != rows - 6:
             failures.append("ContentSwitcher does not fill the remaining height")
 
-        for index in range(1, 8):
-            await pilot.press(f"ctrl+{index}")
-            await pilot.pause(0.08)
-        await pilot.press("ctrl+3")
-        await pilot.pause(0.2)
+        for index, page in enumerate(PAGE_ORDER):
+            await nav_to(pilot, app, index)
+            if state.active_page is not page:
+                failures.append(f"arrow navigation did not open {page.value}")
+        await nav_to(pilot, app, PAGE_ORDER.index(PageId.PHYSICAL), enter_content=True)
         if state.active_page.value != "physical":
-            failures.append("Ctrl+3 did not open Physical")
+            failures.append("arrow navigation did not open Physical")
+        if app.theme != "raidforge":
+            failures.append(f"default theme is {app.theme!r}, expected raidforge")
+        footer = str(screen.query_one("#hotkey-bar").content)
+        if "Ctrl+Q" not in footer:
+            failures.append("Physical footer does not expose Ctrl+Q")
+        footer_limit = 78 if cols <= 90 else cols - 2
+        if len(footer) > footer_limit:
+            failures.append(
+                f"Physical footer is {len(footer)} columns, expected <= {footer_limit}"
+            )
+        breadcrumb = str(screen.query_one(Breadcrumb).content)
+        if "Focus: disk table" not in breadcrumb:
+            failures.append(f"Physical breadcrumb lacks focus label: {breadcrumb!r}")
 
         state.disks = [
             DiskInfo(
@@ -131,11 +165,15 @@ async def main() -> int:
             failures.append(f"physical table width is {table.size.width}, expected {cols}")
         if table.virtual_size.width > cols or table.scroll_x:
             failures.append("physical table needs horizontal scrolling")
+        if table.get_cell_at(Coordinate(0, 0)).plain != " ":
+            failures.append("unselected checkbox is not blank")
 
         await pilot.press("space")
         await pilot.pause(0.2)
         if "c0e32s0" not in state.physical_selection:
             failures.append("Space did not select the cursor row")
+        if table.get_cell_at(Coordinate(0, 0)).plain != "[x]":
+            failures.append("selected checkbox is not an [x] mark")
         await pilot.press("f8")
         await pilot.pause(0.3)
         if not isinstance(app.screen, ConfirmModal):
@@ -154,17 +192,14 @@ async def main() -> int:
             if not state.erase_history:
                 failures.append("no EraseRun recorded after the correct acknowledgement")
 
-        await pilot.press("ctrl+5")
-        await pilot.pause(0.2)
+        await nav_to(pilot, app, PAGE_ORDER.index(PageId.TASKS))
         if screen.query_one("TaskTable").row_count < 2:
             failures.append("task queue does not show the refresh and erase tasks")
-        await pilot.press("ctrl+6")
-        await pilot.pause(0.2)
+        await nav_to(pilot, app, PAGE_ORDER.index(PageId.EVIDENCE))
         if screen.query_one("#page-evidence").size.width != cols:
             failures.append("evidence page does not fill the width")
 
-        await pilot.press("ctrl+7")
-        await pilot.pause(0.2)
+        await nav_to(pilot, app, PAGE_ORDER.index(PageId.SETTINGS))
         settings = screen.query_one("#page-settings")
         await settings._show("appearance")
         await pilot.pause(0.2)

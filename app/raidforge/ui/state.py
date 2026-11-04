@@ -33,6 +33,7 @@ from ..core.models import (
     RaidTopology,
     SnapshotRecord,
     SubmitResult,
+    Vendor,
     utc_now_iso,
 )
 from ..core.publish import PublishState
@@ -348,6 +349,8 @@ class AppState:
         return membership
 
     def blocked_reason(self, disk: DiskInfo) -> str:
+        """Return the RAID *creation* eligibility reason for a disk."""
+
         if not disk.selectable:
             return "media type UNKNOWN - selection forbidden"
         membership = self.disk_membership()
@@ -358,9 +361,33 @@ class AppState:
             return topology.blocked[disk.disk_id]
         return ""
 
+    def erase_blocked_reason(self, disk: DiskInfo) -> str:
+        """Return why this disk cannot join an erase selection; "" means allowed.
+
+        Erase eligibility is deliberately narrower than RAID creation
+        eligibility: the generic provider marks every direct-attached disk
+        ``blocked`` because hardware RAID is unavailable, not because the disk
+        cannot be erased.
+        """
+
+        if not disk.selectable:
+            return "media type UNKNOWN - selection forbidden"
+        membership = self.disk_membership()
+        if disk.disk_id in membership:
+            return f"member of {membership[disk.disk_id]}"
+        topology = self.raid_topology(disk.controller_index)
+        if topology is None:
+            return ""
+        if topology.vendor is Vendor.GENERIC or disk.vendor is Vendor.GENERIC:
+            return ""
+        return topology.blocked.get(disk.disk_id, "")
+
     def prune_selection(self) -> None:
-        valid = {disk.disk_id for disk in self.physical_disks if disk.selectable}
-        valid -= set(self.disk_membership())
+        valid = {
+            disk.disk_id
+            for disk in self.physical_disks
+            if not self.erase_blocked_reason(disk)
+        }
         self.physical_selection &= valid
         if self.physical_cursor and self.disk_by_id(self.physical_cursor) is None:
             self.physical_cursor = None

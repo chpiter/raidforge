@@ -75,7 +75,7 @@ raidforge/
 │       │   ├── screenshots.py    export_screenshot() → snapshots/*.svg
 │       │   ├── svg_raster.py     内嵌 Rich SVG → PNG（仅 Pillow，无系统依赖）
 │       │   ├── erase_report.py   服务器维度 DOCX 擦除报告（多轮汇总 + 截图）
-│       │   ├── publish.py        每轮/退出共用的报告、manifest、上传编排
+│       │   ├── publish.py        每轮报告、manifest、上传编排
 │       │   └── report.py         rsync→HTTP→pending 三级上报 + 补传
 │       └── ui/
 │           ├── app.py / theme.py / state.py / scan.py
@@ -428,9 +428,10 @@ status ssh`）；否则探测会停在 `Permission denied (publickey)`。
 #### 为什么密钥没有口令，`BatchMode` 是否必要
 
 `BatchMode=yes` **不是**“必须无口令”的原因，它只是把交互式提示变成**立即失败**。
-上传发生在 TUI 退出之后：此时没有 ssh-agent、没有 askpass，整个上传预算默认只有
-30 秒（`report.exit_upload_seconds`）；如果 ssh 停下来等待口令，会拖住退出菜单并与
-`/dev/tty` 抢输入。`BatchMode=yes` 让这种情况直接落到 pending 队列，而不是挂起。
+上传发生在擦除任务内（TUI 仍在前台）：没有 ssh-agent、没有 askpass，单次上传预算由
+`report.run_upload_seconds` 控制（默认 30 秒）；如果 ssh 停下来等待口令，会拖住当前
+擦除任务并与 `/dev/tty` 抢输入。`BatchMode=yes` 让这种情况立即失败并在任务日志/报告
+状态中显示，而不是挂起。
 
 无口令私钥被烘进 squashfs，确实意味着**拿到 ISO 的人可以使用该密钥**，这是静态
 安全上的真实代价。更稳妥的运维做法（本镜像未强制实施）是：在接收端
@@ -463,7 +464,7 @@ chmod 600 config/includes.chroot/etc/raidforge/keys/evidence_ed25519
 
 - **日常改接收端**：开机 → Dashboard 按 `S` → 选择 `SSH` 或 `HTTP`（选中的方式优先，
   另一种仍兜底）→ 输入 IPv4 和端口（SSH 默认 22，HTTP 默认 8080；可留空 IP = 只进
-  本地队列）→ `Enter` 保存。写入 `config.d/90-site.yaml` 并立即生效，退出上传与补传
+  不上传）→ `Enter` 保存。写入 `config.d/90-site.yaml` 并立即生效，下一次擦除上传与启动补传
   都现读配置。保存后设置页只探测**当前选中**的通道：SSH 验证登录 + 远端根目录可写；
   HTTP 请求 `/healthz`。成功显示 `receiver <ip> reachable`；失败显示
   `saved, but <SSH|HTTP> check failed: ... - will try <另一种>, then queue locally`。
@@ -492,7 +493,7 @@ report:
   http_port: 8080
 ```
 
-#### 上传失败排查（在擦除机退出 TUI 后的 root shell 里）
+#### 上传失败排查（擦除完成后在 Tasks/Evidence 页或 root shell 里）
 
 ```bash
 ls -l /etc/raidforge/keys/evidence_ed25519          # 必须存在且 0600
@@ -538,20 +539,20 @@ HTTP 地址解析顺序：显式 `report.http_base_url` 优先；为空时由
 
 ### 5.3 传输顺序与补传
 
-1. **每轮擦除结束**立即生成累计报告并做一次 best-effort 上传（TUI 仍在前台），
-   预算 `report.run_upload_seconds`（默认 30 秒）；失败只记录状态/事件，
-   **不会**把仍在变化的会话复制进 pending；
-2. 会话结束后，先等网络就绪（有默认路由**或**任意一块网卡拿到全局 IPv4），
-   最多 `report.wait_for_route_seconds`（默认 30 秒）；
+1. **每轮擦除命令执行完**立即生成累计报告并做一次上传尝试（TUI 仍在前台），
+   预算 `report.run_upload_seconds`（默认 30 秒），成功/部分成功/失败提交都会生成报告；
+2. 如网络尚未就绪，先等默认路由或任意一块网卡拿到全局 IPv4，最多
+   `report.wait_for_route_seconds`（默认 30 秒）；
 3. 路由就绪 → 先试 `report.transport` 选中的方式（SSH 或 HTTP）；
 4. 失败 → 再试另一种；
-5. 两条都失败 → 整个会话目录复制进 `/var/lib/raidforge/pending/<session_id>/`；
-6. 下次启动时后台线程扫描 `pending/` 逐条重试，成功则移动到 `uploaded/`。
+5. 两条都失败 → 当前擦除任务记录 `report_failed` / `upload` 事件并显示失败状态；
+   **不会**等到退出程序再重试或补传；
+6. `pending/` 仅在原有队列已有内容时由启动后台线程补传；本版本不再在退出时新增
+   待传会话。
 7. TUI 的 Dashboard 上按 `U` 可手动重刷一次。
 
-> 退出上传总预算默认 30 秒；如果首选通道把预算耗尽，兜底通道会被跳过，最终进入
-> pending 队列。这是有意的保护，避免退出菜单被网络拖住。每轮即时上传和退出上传
-> 共用同一把发布锁，后一次会以完整历史覆盖同名 DOCX。
+> 退出阶段只重新计算 `manifest.json` 的哈希，不再生成 DOCX、不再上传；报告和上传
+> 只在擦除命令执行完后发生。每轮即时上传共用同一把发布锁。
 
 ---
 
@@ -563,20 +564,20 @@ HTTP 地址解析顺序：显式 `report.http_base_url` 优先；为空时由
 
 | 页面 / 压栈屏 | 内容 | 按键 |
 |---|---|---|
-| **Dashboard** | 2×2 卡片（Server / Controllers / Storage / Health）+ Recent Tasks | `Ctrl+1` · `Enter` 打开任务 · `F5` 刷新 · `Ctrl+P` 命令面板 |
-| **Controllers** | 左侧控制器列表 + 右侧摘要/VD；`Enter` 压入详情 | `Ctrl+2` · `Enter` 详情 · `F7` 建卷 · `F5` 刷新 |
-| **Physical** | 筛选条 + 80 列满宽多选表 + 选中行底部抽屉；VD 成员/UNKNOWN/blocked 灰显不可选 | `Ctrl+3` · `Space` 勾选 · `A` 全选 · `N` 清空 · `/` 搜索 · `F8` 擦除（红） |
-| **Virtual** | 同构满宽布局；`Enter` 压入成员盘 | `Ctrl+4` · `Enter` 成员 · `F7` 建卷（红）· `F9` 删卷（红） |
-| **Tasks** | 串行任务队列 + RichLog 实时日志 | `Ctrl+5` · `C` 取消 · `F5` 刷新 |
-| **Evidence** | 会话列表 + 文件树 + 报告/上传状态 | `Ctrl+6` · `R` 重扫 · `F5` 刷新 |
-| **Settings** | 左分类 + 右表单（连接/上报/证据/外观/关于） | `Ctrl+7` · `Enter` 保存 · `Tab` 字段 |
+| **Dashboard** | 2×2 卡片（Server / Controllers / Storage / Health）+ Recent Tasks | `←/→` 切 Tab · `Enter` 进入内容 · `F5` 刷新 · `Ctrl+P` 命令面板 |
+| **Controllers** | 左侧控制器列表 + 右侧摘要/VD；`Enter` 压入详情 | `←/→` 切 Tab · `Enter` 详情 · `F7` 建卷 · `F5` 刷新 |
+| **Physical** | 筛选条 + 80 列满宽多选表 + 选中行底部抽屉；VD 成员/UNKNOWN/blocked 灰显不可选 | `←/→` 切 Tab · `Enter` 进入表格 · `Space` 勾选 · `A` 全选 · `N` 清空 · `/` 搜索 · `F8` 擦除（红） |
+| **Virtual** | 同构满宽布局；`Enter` 压入成员盘 | `←/→` 切 Tab · `Enter` 成员 · `F7` 建卷（红）· `F9` 删卷（红） |
+| **Tasks** | 串行任务队列 + RichLog 实时日志 | `←/→` 切 Tab · `C` 取消 · `F5` 刷新 |
+| **Evidence** | 会话列表 + 文件树 + 报告/上传状态 | `←/→` 切 Tab · `R` 重扫 · `F5` 刷新 |
+| **Settings** | 左分类 + 右表单（连接/上报/证据/外观/关于） | `←/→` 切 Tab · `Enter` 保存 · `Tab` 字段 |
 | **ControllerDetail**（压栈） | 控制器 KV、VD 表、物理盘表 | `F7` 建卷 · `F9` 删卷 · `F10` 清配置（红）· `F5` · `Esc` |
 | **RAID 向导**（压栈） | ①级别 ②选盘 ③预览（span/容量/warnings/命令序列）④ConfirmModal | `0/1/5/T` 级别 · `Space` 选盘 · `Enter` 下一步 · `Esc` 返回 |
 | **VolumeMembers**（压栈） | VD 成员盘详情 | `Esc` 返回 |
 | **ConfirmModal** | 目标摘要、逐条 dry-run 命令、确认输入 | 擦除/建卷/删卷/清配置统一输入 `yes`；`Tab` 切换输入/按钮，`Esc` 取消 |
 | **命令面板 / 帮助** | `Ctrl+P` 模糊过滤命令；`F1` 上下文帮助 | `Up/Down` · `Enter` · `Esc` |
 
-全局键：`Ctrl+1..7` 直达页面，`Ctrl+Q` 退出（运行中任务第一次只取消），`Ctrl+P` 命令面板，`F1` 帮助，`F5` 全量刷新，`Esc` 逐层返回。
+全局键：NavBar 聚焦时 `←/→` 直接切换页面，`Enter` 进入当前页内容，`Esc` 从内容返回 NavBar；`Ctrl+Q` 退出（运行中任务第一次只取消），`Ctrl+P` 命令面板，`F1` 帮助，`F5` 全量刷新。
 
 > 磁盘表进屏即获得键盘焦点，不用先按 `Tab`；`Tab` 只是把焦点从别处移回表格。
 > 光标是**首列的 `>` 文本标记**（不是背景色块）。16 色控制台上 Textual 的行高亮
@@ -590,22 +591,23 @@ HTTP 地址解析顺序：显式 `report.http_base_url` 优先；为空时由
 ### 6.1.1 双主题与 16 色回退（重要）
 
 默认主题是方案 7.2 的深蓝配色：背景 `#002B49`、高亮 `#4FC3F7`、危险 `#FF5252`，
-当前顶部 Tab 背景 `#0066A1`。但镜像可能跑在**裸 Linux 控制台**上，只有 16 色 ANSI
-调色板；`#002B49` 在那里会被量化成 `SGR 90` bright black，部分 VGA/fbcon 会把它画成
-“什么都没有”。
-
-因此 `ui.palette.select_theme_name()` 做**自动回退**：
+当前顶部 Tab 背景 `#0066A1`，焦点色为高对比的琥珀 `#FFC107`（`$focus`）。
+`TERM=linux` 不再自动把主题切到黑白；单色主题只在显式选择时使用：
 
 | 条件 | 主题 |
 |---|---|
-| `TERM=linux` / `fb*` 或 `RAIDFORGE_MONO=1` | `raidforge-mono`（纯 `#000000` / `#FFFFFF`） |
-| 其它彩色终端 | `raidforge`（7.2 深蓝） |
-| `RAIDFORGE_THEME=blue` / `mono` | 强制指定 |
+| `auto` / 未配置 / `raidforge` | `raidforge`（7.2 深蓝，默认） |
+| `RAIDFORGE_THEME=mono` 或 `ui.theme: raidforge-mono` | `raidforge-mono`（纯 `#000000` / `#FFFFFF`） |
+| `RAIDFORGE_MONO=1` | `raidforge-mono`（显式环境变量） |
+| `RAIDFORGE_THEME=blue` | 强制深蓝 |
 | Settings → Appearance | 本次会话手动切换 |
 
-TCSS 只引用主题变量（`$background`/`$accent`/`$error`/`$nav-active-bg`/`$table-zebra` 等），
-两套主题共用同一份布局。`tests/test_mono_live.py` 在 `TERM=linux` 等价的 mono 主题下
-检查实际渲染段只有纯黑/纯白；`tests/test_mono_static.py` 检查 TCSS 不写死颜色。
+TCSS 只引用主题变量（`$background`/`$accent`/`$error`/`$focus`/`$nav-active-bg`/`$table-zebra` 等），
+两套主题共用同一份布局。聚焦控件使用 `$focus` 高亮：表格光标、表头、输入框、按钮、
+下拉、选项列表、树和导航 Tab 都有独立的 `:focus` 样式；单色主题下退化为纯白/黑反色。
+面包屑右侧还会显示 `▸ Focus: <控件>`，任务运行时显示当前任务和进度。
+`tests/test_mono_live.py` 在 mono 主题下检查实际渲染段只有纯黑/纯白；
+`tests/test_mono_static.py` 检查 TCSS 不写死颜色且焦点变量存在。
 
 ### 6.1.2 RAID 管理（屏幕与流程）
 
@@ -745,26 +747,24 @@ RAID 操作另有一条独立事件流：
 `raid_confirm_shown` → (`raid_confirm_rejected` | `raid_confirm_accepted` | `raid_confirm_cancelled`) →
 `raid_run_started` → `raid_submit_started` ×N → `raid_submit` ×N →
 `raid_run_finished` → `raid_run_recorded` → `raid_rescan_after`（含 `observed`）。
-`report_generated`、`report_failed`、`upload` 都带 `phase`（`run`=每轮结束，
-`exit`=Q 退出），`upload` 另带 `queued`（是否进入待传队列）。每轮结束会各出现一次，
-因此同一会话可有多条 `phase=run` 记录。
+`report_generated`、`report_failed`、`upload` 都带 `phase`；应用运行时只有
+`phase=run`（每轮擦除结束）。`upload` 另带 `queued`（是否进入待传队列）。每轮结束
+会各出现一次，因此同一会话可有多条 `phase=run` 记录；退出阶段不再产生报告/上传事件。
 设置页保存会额外写 `settings_changed`（含新 IP），并在后台探测前后写
 `settings_ssh_check_started` / `settings_ssh_check`（含 `ok` 与 `message`，失败时
 保留 `detail` 的 stderr 尾部 2000 字符）。
 
 ### 6.5.1 数据擦除报告（DOCX）
 
-TUI 退出后、`manifest.json` 落盘前，程序会把本次启动的**全部擦除记录**汇总成
-**一个** Word 报告，命名 `<服务器序列号>-raidforge-report-<YYYYMMDD>.docx`。
-**每轮擦除结束都会立即重新生成并上传这份累计报告**（TUI 不需要退出）；第二轮会覆盖
-同名文件并再次上传，最终内容包含全部轮次。
+每轮擦除命令执行完后，程序会把本次启动的**全部擦除记录**汇总成**一个** Word 报告，
+命名 `<服务器序列号>-raidforge-report-<YYYYMMDD>.docx`。
+**报告和上传都在擦除任务内立即完成**（TUI 不需要退出）；第二轮会覆盖同名文件并再次
+上传，最终内容包含全部轮次。应用退出时只更新 `manifest.json`，不再生成报告或上传。
 
 - 服务器序列号按 `[A-Za-z0-9._-]` 清洗，非法字符换成 `_`，太长截到 64 字符，
   为空时用 `UNKNOWN`；日期取**会话开始时间（UTC）**，不是报告生成时刻。
-- 每轮结束时先等待 `05-progress` 截图写入 `snapshot_log`，再在后台线程生成报告，
-  保证过程截图不会比报告晚落盘。即时上传受 `report.run_upload_seconds`（默认 30 秒）
-  限制；失败只写状态/事件，**不会**把仍在变化的会话复制进 pending，Q 退出时的最终
-  上传仍会排队。
+- 每轮结束时先生成报告；即时上传受 `report.run_upload_seconds`（默认 30 秒）限制；
+  失败只写状态/事件，**不会**把仍在变化的会话复制进 pending，也不会等到 Q 退出再上传。
 - 顶部信息表只有四项：**服务器序列号、会话 ID、检测工具、生成时间**。不写 SN 来源、
   主机名、操作模式或擦除轮次。
 - 内容分两部分：
@@ -791,7 +791,7 @@ TUI 退出后、`manifest.json` 落盘前，程序会把本次启动的**全部�
   表头行跨页重复。图注与页脚小于正文。上述中文字体只写入 DOCX 字体名，ISO 不需要
   安装；阅读端缺失时 Word 会静默替换，打印前请确认目标机已装
   方正小标宋简体 / 仿宋_GB2312 / 楷体_GB2312。
-- 报告生成失败只记 `report_failed` 并继续上传其余证据；**不会**阻塞退出菜单或上传。
+- 报告生成失败只记 `report_failed`，擦除任务状态仍按擦除结果判定；不会在退出时补生成。
 - 报告就写在会话根目录，随现有 rsync / HTTP / pending 整目录链路一起上传，并进入
   `manifest.json` 的 SHA-256 清单。manifest 同时记录：
   - `report_file` / `report_generated_at`；

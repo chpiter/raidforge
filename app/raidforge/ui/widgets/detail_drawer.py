@@ -9,7 +9,9 @@ from textual.widgets import Static
 
 
 class DetailDrawer(Static):
-    can_focus = True
+    #: The drawer has no actions; taking focus here would be a keyboard trap.
+    can_focus = False
+
     def __init__(self, *, id: str) -> None:
         super().__init__("", id=id, classes="detail-drawer -hidden")
 

@@ -170,7 +170,7 @@ def test_manifest_counters_and_parent_inheritance(tmp_path):
     ctx.erase_history = [_run(disk)]
     ctx.detection = DetectionResult(tool="sg3_utils", vendor=Vendor.GENERIC, controllers=[])
 
-    manifest = finalize_session(ctx)
+    manifest = finalize_session(ctx, publish=True)
     assert manifest["tool"] == "sg3_utils"
     assert manifest["disk_count"] == 2
     assert len(manifest["inventory"]) == 2
@@ -180,7 +180,7 @@ def test_manifest_counters_and_parent_inheritance(tmp_path):
     assert manifest["erase_runs"][0]["attempts"][0]["planned"] is True
 
     parent = _context(tmp_path)
-    parent_manifest = finalize_session(parent)
+    parent_manifest = finalize_session(parent, publish=True)
     for key in ("tool", "disk_count", "inventory", "submissions"):
         assert parent_manifest[key] == manifest[key], key
     assert parent_manifest["erase_runs"] == manifest["erase_runs"]

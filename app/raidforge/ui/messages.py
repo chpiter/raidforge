@@ -91,10 +91,17 @@ class ReportStatusChanged(Message):
 class NavigateRequested(Message):
     """Asked by a page or command palette to switch tabs."""
 
-    def __init__(self, page: PageId, push_history: bool = True) -> None:
+    def __init__(
+        self,
+        page: PageId,
+        push_history: bool = True,
+        focus_content: bool = True,
+    ) -> None:
         super().__init__()
         self.page = page
         self.push_history = push_history
+        #: Arrow-driven tab switches keep the NavBar focused; Enter opens the page.
+        self.focus_content = focus_content
 
 
 class BreadcrumbChanged(Message):
@@ -126,10 +133,11 @@ class ConfirmRequested(Message):
 class Toast(Message):
     """Short non-blocking status text."""
 
-    def __init__(self, text: str, level: str = "info") -> None:
+    def __init__(self, text: str, level: str = "info", timeout: float = 3.0) -> None:
         super().__init__()
         self.text = text
         self.level = level
+        self.timeout = timeout
 
 
 __all__ = [

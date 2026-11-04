@@ -28,6 +28,7 @@ from ..pages.physical import PhysicalPage
 from ..pages.settings import SettingsPage
 from ..pages.tasks import TasksPage
 from ..pages.virtual import VirtualPage
+from ..focus import FocusLabelMixin
 from ..services import Services
 from ..state import AppState
 from ..tasks import TaskRunner, make_task, refresh_job
@@ -57,17 +58,10 @@ SNAPSHOT_NAMES = {
 }
 
 
-class MainScreen(Screen):
+class MainScreen(FocusLabelMixin, Screen):
     """The only persistent screen; detail/wizard screens are pushed on top."""
 
     BINDINGS = [
-        Binding("ctrl+1", "goto('dashboard')", "Dashboard", show=False, priority=True),
-        Binding("ctrl+2", "goto('controllers')", "Controllers", show=False, priority=True),
-        Binding("ctrl+3", "goto('physical')", "Physical", show=False, priority=True),
-        Binding("ctrl+4", "goto('virtual')", "Virtual", show=False, priority=True),
-        Binding("ctrl+5", "goto('tasks')", "Tasks", show=False, priority=True),
-        Binding("ctrl+6", "goto('evidence')", "Evidence", show=False, priority=True),
-        Binding("ctrl+7", "goto('settings')", "Settings", show=False, priority=True),
         Binding("f1", "help", "Help", show=False),
         Binding("f5", "refresh", "Refresh", show=False),
         Binding("ctrl+p", "palette", "Commands", show=False, priority=True),
@@ -155,8 +149,15 @@ class MainScreen(Screen):
     def current_page(self) -> StatefulPage:
         return self.page_for(self.state.active_page)
 
-    def show_page(self, page: PageId, push_history: bool = True) -> None:
+    def show_page(
+        self,
+        page: PageId,
+        push_history: bool = True,
+        focus_content: bool = True,
+    ) -> None:
         if page is self.state.active_page:
+            if focus_content:
+                self._focus_page(page)
             return
         try:
             self.current_page().save_scroll()
@@ -174,12 +175,23 @@ class MainScreen(Screen):
             target = self.page_for(page)
             target.apply_layout_mode(self.state.layout_mode)
             target.restore_scroll()
-            self.call_after_refresh(target.focus_primary)
+            if focus_content:
+                self._focus_page(page)
             if page is PageId.EVIDENCE and not self.state.evidence_sessions:
                 target._scan()  # type: ignore[attr-defined]
         except Exception:  # pragma: no cover
             pass
         self.request_snapshot(SNAPSHOT_NAMES[page])
+
+    def _focus_page(self, page: PageId) -> None:
+        """Move focus into the page content after a tab switch."""
+
+        try:
+            target = self.page_for(page)
+        except Exception:  # pragma: no cover - page not mounted yet
+            return
+        self.call_after_refresh(target.focus_primary)
+        self.set_timer(0.02, target.focus_primary)
 
     def action_goto(self, page_name: str) -> None:
         try:
@@ -192,7 +204,12 @@ class MainScreen(Screen):
             target = self.state.page_history.pop()
             self.show_page(target, push_history=False)
             return
-        self.toast("already at the top level")
+        # No drill-down history: hand focus back to the tab strip so the
+        # operator can keep switching pages with Left/Right.
+        try:
+            self.query_one(NavBar).focus()
+        except Exception:  # pragma: no cover - initial mount
+            pass
 
     # -- broadcast ----------------------------------------------------------
     def broadcast(self, message) -> None:
@@ -209,10 +226,19 @@ class MainScreen(Screen):
         self._update_chrome()
 
     def on_navigate_requested(self, message: NavigateRequested) -> None:
-        self.show_page(message.page)
+        self.show_page(
+            message.page,
+            push_history=message.push_history,
+            focus_content=message.focus_content,
+        )
 
     def on_hotkeys_changed(self, message: HotkeysChanged) -> None:
         if message.page is not None and message.page is not self.state.active_page:
+            return
+        if isinstance(self.app.focused, NavBar):
+            # A page repaint must not replace the tab-strip hints while the
+            # operator is still navigating with the arrow keys.
+            self._update_hotkeys()
             return
         self.query_one(HotkeyBar).update_hints(message.hints, self.app.theme)
 
@@ -225,7 +251,11 @@ class MainScreen(Screen):
         self.state.last_message = message.text
         severity = {"warn": "warning", "error": "error"}.get(message.level, "information")
         try:
-            self.app.notify(message.text, severity=severity, timeout=3)
+            self.app.notify(
+                message.text,
+                severity=severity,
+                timeout=max(3.0, float(getattr(message, "timeout", 3.0))),
+            )
         except Exception:  # pragma: no cover - older Textual
             pass
 
@@ -242,12 +272,48 @@ class MainScreen(Screen):
         self._update_chrome()
 
     # -- chrome -------------------------------------------------------------
+    def _task_label(self) -> str:
+        """Compact description of the active task for the breadcrumb."""
+
+        task_id = self.state.active_task_id
+        if not task_id:
+            return ""
+        task = next((item for item in self.state.task_queue if item.id == task_id), None)
+        if task is None:
+            return "task running"
+        if self.state.cancel_event.is_set():
+            return f"⚠ {task.kind.value} cancelling"
+        progress = task.progress_text
+        suffix = f" {progress}" if progress and progress != "-" else ""
+        return f"{task.status_icon} {task.kind.value}{suffix}"
+
+    def _nav_hotkeys(self) -> List[HotkeyHint]:
+        return [
+            HotkeyHint("←/→", "switch"),
+            HotkeyHint("Enter", "open"),
+            HotkeyHint("Ctrl+Q", "quit"),
+        ]
+
+    def _update_hotkeys(self) -> None:
+        try:
+            focused = self.app.focused
+            hints = self._nav_hotkeys() if isinstance(focused, NavBar) else self.current_page().hotkeys()
+            self.query_one(HotkeyBar).update_hints(hints, self.app.theme)
+        except Exception:  # pragma: no cover - initial compose
+            pass
+
+    def on_descendant_focus(self, event) -> None:
+        super().on_descendant_focus(event)
+        self._update_hotkeys()
+
     def _update_chrome(self) -> None:
         try:
             self.query_one(StatusBar).update_state(self.state)
-            self.query_one(Breadcrumb).update_items(self.state.breadcrumb_items())
+            breadcrumb = self.query_one(Breadcrumb)
+            breadcrumb.update_items(self.state.breadcrumb_items())
+            breadcrumb.set_task_label(self._task_label())
             self.query_one(NavBar).set_active(self.state.active_page)
-            self.query_one(HotkeyBar).update_hints(self.current_page().hotkeys(), self.app.theme)
+            self._update_hotkeys()
         except Exception:  # pragma: no cover - initial compose
             pass
 
@@ -275,7 +341,12 @@ class MainScreen(Screen):
     # -- global actions -----------------------------------------------------
     def action_refresh(self) -> None:
         if self.state.active_task_id is not None:
-            self.toast("a task is running; refresh after it finishes")
+            task = next(
+                (item for item in self.state.task_queue if item.id == self.state.active_task_id),
+                None,
+            )
+            title = task.title if task is not None else "a task"
+            self.toast(f"{title} is running - F5 disabled; Ctrl+Q cancels", "warn")
             return
         runner = self.state.task_runner
         services = self.state.services
@@ -321,13 +392,6 @@ class MainScreen(Screen):
 
         page = self.current_page()
         return [
-            Command("Dashboard", "goto('dashboard')", "Ctrl+1", namespace=self),
-            Command("Controllers", "goto('controllers')", "Ctrl+2", namespace=self),
-            Command("Physical", "goto('physical')", "Ctrl+3", namespace=self),
-            Command("Virtual", "goto('virtual')", "Ctrl+4", namespace=self),
-            Command("Tasks", "goto('tasks')", "Ctrl+5", namespace=self),
-            Command("Evidence", "goto('evidence')", "Ctrl+6", namespace=self),
-            Command("Settings", "goto('settings')", "Ctrl+7", namespace=self),
             Command("Refresh all", "refresh", "F5", enabled=self.state.active_task_id is None, namespace=self),
             Command("Create volume", "create", "F7", enabled=hasattr(page, "action_create"), namespace=self),
             Command("Erase selected disks", "erase", "F8", enabled=hasattr(page, "action_erase"), namespace=self),

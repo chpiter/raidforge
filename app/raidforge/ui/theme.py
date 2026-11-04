@@ -3,10 +3,12 @@
 Two themes are registered:
 
 ``raidforge``
-    The 7.2 deep-blue palette (#002B49 / #4FC3F7 / #FF5252).
+    The default 7.2 deep-blue palette (#002B49 / #4FC3F7 / #FF5252), with a
+    high-contrast amber focus colour (``$focus``).
 ``raidforge-mono``
-    Pure black and white for the 16-colour VGA/fbcon console, where a dark
-    brand colour is quantised to ``SGR 90`` and can become invisible.
+    Explicit pure black and white option for 16-colour VGA/fbcon consoles,
+    where a dark brand colour is quantised to ``SGR 90`` and can become
+    invisible.  It is never selected automatically from ``TERM``.
 
 The TCSS file references only theme variables, so the same layout works under
 both palettes.
@@ -23,6 +25,7 @@ from .palette import (
     BLUE_BORDER,
     BLUE_DANGER,
     BLUE_FG,
+    BLUE_FOCUS,
     BLUE_MUTED,
     BLUE_NAV_ACTIVE,
     BLUE_PANEL,
@@ -34,6 +37,7 @@ from .palette import (
     MONO_FG,
     THEME_BLUE,
     THEME_MONO,
+    focus_colour,
     mono_theme,
     raidforge_theme,
     select_theme_name,
@@ -87,6 +91,7 @@ __all__ = [
     "BLUE_BORDER",
     "BLUE_DANGER",
     "BLUE_FG",
+    "BLUE_FOCUS",
     "BLUE_MUTED",
     "BLUE_NAV_ACTIVE",
     "BLUE_PANEL",
@@ -102,6 +107,7 @@ __all__ = [
     "MONO_SGR_BANNED",
     "MONO_THEME_NAME",
     "build_css",
+    "focus_colour",
     "mono_theme",
     "raidforge_theme",
     "select_theme_name",

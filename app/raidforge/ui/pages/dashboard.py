@@ -8,6 +8,7 @@ from typing import List
 from rich.text import Text
 from textual.app import ComposeResult
 from textual.containers import Grid
+from textual.widgets import DataTable
 
 from ..messages import NavigateRequested
 from ..models import HotkeyHint, PageId, RefreshScope, StatusKind

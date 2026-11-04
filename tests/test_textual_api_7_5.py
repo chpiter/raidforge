@@ -64,3 +64,14 @@ def test_navbar_is_focusable_and_has_tab_border():
 def test_hotkey_bar_is_not_focusable():
     text = (UI / "widgets" / "hotkey_bar.py").read_text(encoding="utf-8")
     assert "can_focus = False" in text
+
+
+def test_detail_drawer_is_not_focusable():
+    text = (UI / "widgets" / "detail_drawer.py").read_text(encoding="utf-8")
+    assert "can_focus = False" in text
+
+
+def test_stylesheet_has_focus_variables():
+    tcss = (UI / "styles" / "app.tcss").read_text(encoding="utf-8")
+    for variable in ("$focus", "$focus-foreground", "$focus-blurred"):
+        assert variable in tcss

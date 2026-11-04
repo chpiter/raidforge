@@ -253,8 +253,23 @@ def erase_job(
         )
         accepted = sum(1 for result in results if result.ok)
         failed = len(results) - accepted
+        cancelled = state.cancel_event.is_set() and len(results) < len(plans)
         ctx.snapshot("20-erase-progress")
-        if state.cancel_event.is_set() and len(results) < len(plans):
+
+        # The report belongs to the erase run, not to application exit.  Run it
+        # for success, partial and failed submissions alike so the audit trail
+        # is written while the result is still fresh.
+        if not state.cfg.dry_run and results:
+            ctx.log("erase submitted; generating report and uploading now ...")
+            try:
+                report_result = report_job(services)(ctx)
+            except Exception as exc:  # report must not change the erase verdict
+                ctx.log(f"report/upload crashed: {exc}")
+                report_result = TaskStatus.PARTIAL
+            if report_result is TaskStatus.PARTIAL:
+                ctx.log("report/upload finished with warnings")
+
+        if cancelled:
             return TaskStatus.CANCELLED
         if state.cfg.dry_run:
             ctx.log("dry-run: commands were not submitted")
@@ -276,9 +291,6 @@ def erase_job(
                 )
             except Exception as exc:  # pragma: no cover - refresh is best effort
                 ctx.log(f"post-run disk refresh failed: {exc}")
-        if not state.cfg.dry_run:
-            report_task = make_task(TaskKind.REPORT, "Publish report", epoch=epoch)
-            ctx.enqueue(report_task, report_job(services))
         return TaskStatus.SUCCEEDED
 
     return job
