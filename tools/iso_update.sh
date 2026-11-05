@@ -1,13 +1,15 @@
 #!/usr/bin/env bash
 #
-# iso_update.sh - classify local changes and choose the cheapest ISO path.
+# iso_update.sh - layered incremental ISO update (patch -> refresh -> full).
 #
-#   ./tools/iso_update.sh --adopt                 # record the current ISO baseline
-#   ./tools/iso_update.sh --dry-run               # print classification only
-#   ./tools/iso_update.sh                         # app-only patch or full fallback
-#   ./tools/iso_update.sh --test                  # zstd + -test image
+#   ./tools/iso_update.sh --adopt                 # record the current X86/ARM ISO baseline
+#   ./tools/iso_update.sh --dry-run               # print layer/command/eta only (no network)
+#   ./tools/iso_update.sh                         # amd64 + arm64, cheapest safe layer
+#   ./tools/iso_update.sh --arch amd64            # one architecture
+#   ./tools/iso_update.sh --refresh               # force the refresh layer
+#   ./tools/iso_update.sh --test                  # zstd + -test image (not collected)
 #   ./tools/iso_update.sh --baseline [--fast]     # force a normal build
-#   ./tools/iso_update.sh --arch arm64            # arm64 state/baseline (VM build)
+#   ./tools/iso_update.sh --no-collect            # do not copy into /root/raidforge/out
 #
 set -Eeuo pipefail
 

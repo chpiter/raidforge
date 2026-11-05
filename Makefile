@@ -90,13 +90,16 @@ drivers-verify: ## verify the built chroot against the driver manifest
 remote-sh:        ## open a shell command on the build host, e.g. make remote-sh CMD=uptime
 	./tools/sync.sh --run "$(CMD)"
 
-iso-adopt:        ## record the current ISO as the incremental baseline
+iso-adopt:        ## record the current X86+ARM ISOs as the incremental baseline
 	./tools/iso_update.sh --adopt
 
-iso-update:       ## classify changes and patch/build the ISO (release xz)
+iso-update:       ## layered build for X86+ARM (patch -> refresh -> full), collect into out/
 	./tools/iso_update.sh
 
-iso-update-test:  ## app-only zstd test ISO
+iso-update-x86:   ## layered build for amd64 only
+	./tools/iso_update.sh --arch amd64
+
+iso-update-test:  ## app-only zstd test ISO (not collected into out/)
 	./tools/iso_update.sh --test
 
 webplane:         ## run the control plane locally (Flask, port 8080)
@@ -116,7 +119,7 @@ help:
 
 .PHONY: build build-no-vendor vendor preflight clean clean-all plan run test check pytest compile \
         webplane webplane-test webplane-web webplane-deploy help \
-        sync sync-all sync-watch remote-build remote-sh iso-adopt iso-update iso-update-test \
+        sync sync-all sync-watch remote-build remote-sh iso-adopt iso-update iso-update-x86 iso-update-test \
         vm-init vm-start vm-stop vm-status sync-arm64 remote-build-arm64 iso-update-arm64 \
         vm-host-prep \
         drivers drivers-probe drivers-verify

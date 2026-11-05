@@ -127,7 +127,7 @@ raidforge/
 │   ├── chroot_tty.py            L1：在构建 chroot 的真实 pty 里跑 TUI（~15s）
 │   ├── qemu_drive.py            L4：无头 qemu 启动 ISO、驱动 TUI、验证退出菜单（--erase-rounds）
 │   ├── sync.sh                  把本地产物同步到构建主机（增量 / 监听 / 远端执行）
-│   ├── iso_update.sh / .py      变更分类；app-only 走增量 ISO 补丁，否则回落 build.sh
+│   ├── iso_update.sh / .py      分层增量调度：patch → refresh → full，汇总到 out/
 │   ├── iso_patch.sh             远端复用 chroot 重打 squashfs/ISO（由 iso_update 调用）
 │   ├── rssh.py                  免交互 SSH 小工具（exec / put / push，读 .remote.env）
 │   └── .remote.env              构建主机账号（已 gitignore）
@@ -289,30 +289,43 @@ cp hw*.json vendor/drivers/probes/
 `cache/packages.*` 都留着，重复构建直接从 chroot 阶段起步，省掉约 700 MB 下载；
 需要干净的 chroot / 换过镜像源时再加 `--full-clean`。
 
-### 3.1 增量 ISO 更新（app-only）
+### 3.1 分层增量 ISO 更新
 
-squashfs 不能原地替换单个文件；但 `chroot/` 就是上一版 squashfs 的源树。只改
-`app/raidforge/**`、`app/run.py` 或 `app/*.example` 时，可以跳过 live-build 编排，
-直接刷新 chroot 里的应用、重打 squashfs，再用 `binary/.disk/mkisofs` 记录的原
-xorriso 命令重打 ISO：
+`tools/iso_update.sh` 按变更内容选择最便宜的安全构建层，默认一次处理 X86 与 ARM：
+
+| 层 | 触发路径 | 命令 | amd64 耗时 |
+|---|---|---|---|
+| NO_ISO | `webplane/`、`tests/`、`tools/`（`tools/drivers.py` 除外）、文档 | 不重建 ISO（webplane 改动仍部署一次） | – |
+| APP_ONLY | `app/run.py`、`app/raidforge/**`、`app/*.example` | `tools/iso_patch.sh`（ARM 自动改为 REFRESH） | ~2 分钟 |
+| REFRESH_VENV | `app/requirements.txt`、`app/pyproject.toml`、`vendor/wheels/**`、证据私钥 | `build.sh --refresh --venv-reset` | ~5 分钟 |
+| REFRESH | `config/includes.chroot/**`、`config/hooks/**`、`vendor/drivers/**`、`vendor/cli/**`、`tools/drivers.py` | `build.sh --refresh` | ~4 分钟 |
+| FULL | `auto/**`、`config/package-lists/**`、`build.sh`、其余路径 | `build.sh` | ~7 分钟（ARM 1–2 小时） |
 
 ```bash
-./tools/iso_update.sh --adopt        # 首次：把当前发布 ISO 记录为增量基线
-./tools/iso_update.sh --dry-run      # 只看分类，不写远端
-./tools/iso_update.sh                # 默认发布级 xz；旧 ISO 备份为 .prev
-./tools/iso_update.sh --test         # zstd + -test 后缀（更快）
-./tools/iso_update.sh --baseline     # 强制正常构建并重建基线
-./tools/iso_update.sh --fast         # 强制 build.sh --fast
+./tools/iso_update.sh --adopt        # 首次：把现有 X86/ARM ISO 记录为基线（ARM 会自动起 VM）
+./tools/iso_update.sh --dry-run      # 只打印层级/命令/预计耗时/回退原因，不联网
+./tools/iso_update.sh                # 默认 X86+ARM，自动选择层级
+./tools/iso_update.sh --arch amd64   # 只处理一个架构
+./tools/iso_update.sh --refresh      # 强制 REFRESH（前置不足会自动升级 FULL）
+./tools/iso_update.sh --test         # zstd + -test 后缀，产物不收集到 out/
 ```
 
-分类规则：`webplane/`、`tests/`、`tools/`、文档等为 **NO_ISO**（只按需部署
-webplane）；`app/raidforge/**`、`app/run.py`、`app/*.example` 为 **APP_ONLY**；
-`config/`、`auto/`、`build.sh`、`app/requirements.txt`、`app/pyproject.toml`、
-vendor wheels 或混合改动为 **NORMAL**（回落 `build.sh`）。基线保存在
-`.tmp/iso-state.json`（已 gitignore），按文件清单比较，不依赖远端 git。
-远端 `iso_patch.sh` 会复刻 010/900 hook 的“先删后拷”和清理逻辑，校验 BUILD_ID
-canary、BIOS/UEFI El Torito 与 `RAIDFORGE` 卷标；发布级 xz 约 110–120 秒，
-`--test` 约 40–55 秒。
+规则与安全约束：
+
+- 分类取所有变更路径的最高层；基线保存在 `.tmp/iso-state.json` 与
+  `.tmp/iso-state-arm64.json`，按内容哈希比较，不依赖远端 git。
+- 上次产物是 `-test` 而现在要发布级（或反向）时，APP_ONLY/REFRESH 一律升级
+  FULL：zstd→xz 会让 `lb config` 删除 `binary/`，`--fast` 的 1 秒倒计时也不能
+  带进发布镜像。
+- 补丁/刷新前置缺失（远端 chroot、squashfs、mkisofs、venv 被清理）时自动逐级
+  降级 `patch → refresh → full`，日志会打印 `fallback:` 原因。
+- REFRESH 复用 chroot；`REFRESH_VENV` 会先删 `chroot/opt/raidforge/venv`，
+  避免 010 hook 的 import 快速路径留用旧依赖。
+- 发布级构建成功后自动汇总到 `/root/raidforge/out/`：
+  `raidforge-<ver>-<date>-X86.iso`、`raidforge-<ver>-<date>-ARM.iso` 及各自
+  `.sha256`；同名且哈希一致时跳过复制，可用 `--no-collect` 关闭。
+- 远端 `iso_patch.sh` 复刻 010/900 hook 的“先删后拷”和清理逻辑，校验 BUILD_ID
+  canary、BIOS/UEFI El Torito 与 `RAIDFORGE` 卷标（发布级 xz 约 110–120 秒）。
 
 **Agent 控制面参数**（生成 `/etc/raidforge/agent.yaml`，不写 token）：
 
@@ -382,7 +395,8 @@ make vm-host-prep            # 一次性：构建机安装 qemu-system-arm / qem
 make vm-init                 # 一次性：下载 cloud image、建 24G 磁盘、cloud-init 装构建工具
 make vm-start                # 启动 VM（首次 cloud-init 装包，TCG 下 20-40 分钟）
 make remote-build-arm64      # 同步 + 在 VM 内执行 ./build.sh
-make iso-update-arm64        # 变更分类后重建（arm64 不走 app-only 补丁路径）
+make iso-update-arm64        # 分层增量：app/config 类走 REFRESH，仅补丁仍为 amd64-only
+./tools/iso_update.sh --arch arm64   # 同上；会自动启动 VM 并把产物收集到 out/
 ./tools/sync.sh --arch arm64 --run "./build.sh --fast"   # 迭代用测试镜像
 ./tools/sync.sh --run "bash /root/raidforge/tools/arm64_vm.sh pull"  # 取回 ISO
 ```

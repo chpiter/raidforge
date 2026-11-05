@@ -157,10 +157,11 @@ xorriso -indev "$OUT" -pvd_info 2>/dev/null | grep -q 'RAIDFORGE' \
 
 END=$(date +%s)
 if [[ "$JSON" == "1" ]]; then
-    python3 - "$NAME" "$MODE" "$BUILD_HASH" "$START" "$END" "$SQUASH" "$OUT" <<'PY'
+    PATCH_ENGINE_SHA=$(sha256sum "$REPO/tools/iso_patch.sh" | awk '{print $1}')
+    python3 - "$NAME" "$MODE" "$BUILD_HASH" "$START" "$END" "$SQUASH" "$OUT" "$PATCH_ENGINE_SHA" <<'PY'
 import hashlib, json, os, sys
 
-name, mode, build_hash, start, end, squash, out = sys.argv[1:]
+name, mode, build_hash, start, end, squash, out, engine = sys.argv[1:]
 
 def sha256(path):
     digest = hashlib.sha256()
@@ -180,6 +181,7 @@ print("@@ISO_PATCH_JSON@@" + json.dumps({
     "squashfs_sha256": sha256(squash),
     "squashfs_size": os.stat(squash).st_size,
     "seconds": int(end) - int(start),
+    "patch_engine_sha": engine,
 }))
 PY
 else

@@ -5,6 +5,8 @@
 # Usage:
 #   ./build.sh                 # full rebuild (clean chroot), ~6m45s
 #   ./build.sh --refresh       # reuse the chroot, re-run only the app stages (~4m)
+#   ./build.sh --refresh --venv-reset
+#                              # same, but rebuild /opt/raidforge/venv from the wheels
 #   ./build.sh --fast          # --refresh + zstd squashfs + no boot countdown (~2m)
 #   ./build.sh --arch arm64    # build on an arm64 host/VM (no cross compilation)
 #   ./build.sh --probe hw.json # resolve drivers from a raidforge-probe report
@@ -69,6 +71,7 @@ SQUASH_TYPE="xz"
 SQUASH_LEVEL=""
 ISO_SUFFIX=""
 BUILD_ID_WANT=""
+VENV_RESET=0
 AGENT_SERVER_URL="http://192.168.40.132:8080"
 AGENT_API_PREFIX="/api/raidforge"
 AGENT_POLL_MODE="short"
@@ -91,6 +94,7 @@ while [[ $# -gt 0 ]]; do
                        ISO_SUFFIX="-test"
                        export RAIDFORGE_BOOT_TIMEOUT="${RAIDFORGE_BOOT_TIMEOUT:-1}" ;;
         --arch)        [[ $# -ge 2 ]] || die "--arch needs a value"; ARCH_RAW="$2"; shift ;;
+        --venv-reset)  VENV_RESET=1 ;;
         --probe)       [[ $# -ge 2 ]] || die "--probe needs a file"; PROBE_REPORT="$2"; shift ;;
         --profile)     [[ $# -ge 2 ]] || die "--profile needs a value"; PROFILE="$2"; shift ;;
         --allow-unknown-drivers) ALLOW_UNKNOWN_DRIVERS=1 ;;
@@ -660,6 +664,13 @@ refresh_build() {
     stage_vendor_cli
     stage_drivers
 
+    # Dependency changes need a clean venv: the 010 hook's fast path only checks
+    # that the modules import, so a new wheel pin would otherwise be ignored.
+    if [[ "$VENV_RESET" == "1" ]]; then
+        log "venv reset: rebuilding /opt/raidforge/venv from the staged wheels"
+        rm -rf chroot/opt/raidforge/venv
+    fi
+
     # Package lists must be refreshed before includes/hooks run.
     ensure_package_stage_for_drivers
 
@@ -757,9 +768,10 @@ fi
 
 if [[ "$DO_BUILD" == "1" ]]; then
     if [[ "$REBUILD_MODE" == "refresh" ]]; then
-        log "refresh build: reusing the chroot, ${SQUASH_TYPE} squashfs"
+        log "layer=refresh: reusing the chroot, ${SQUASH_TYPE} squashfs"
         refresh_build
     else
+        log "layer=full: cleaning and rebuilding the chroot"
         # Clean first: auto/clean deletes the staged source tree, so staging has
         # to happen afterwards or the hook would find /usr/src/raidforge missing.
         lb_clean
