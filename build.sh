@@ -47,6 +47,13 @@ DO_DRIVERS=1
 PROFILE="minimal"
 PROBE_REPORT=""
 ALLOW_UNKNOWN_DRIVERS=0
+
+# Canonical vendor CLI names plus the families that alias each other.  If any
+# member of a family is staged from vendor/cli/<arch>, every member already in
+# includes.chroot is removed first so a stale binary can never shadow the new
+# one (e.g. old `storcli` beating new `storcli64`).
+VENDOR_TOOLS=(storcli storcli64 perccli perccli64 arcconf ssacli hpssacli hiraidadm)
+VENDOR_FAMILIES=("storcli storcli64" "perccli perccli64" "ssacli hpssacli" "arcconf" "hiraidadm")
 # Cache kept by default: dropping the bootstrap tarball + .deb cache makes every
 # rebuild re-download ~700 MB of packages. Use --full-clean for a pristine build.
 KEEP_CACHE=1
@@ -174,7 +181,7 @@ preflight() {
     # would be packed into the image and fail with "Exec format error": move them
     # to the amd64 payload (recoverable) before the tool scan below.
     if [[ "$ARCH" != "amd64" ]] && command -v file >/dev/null 2>&1; then
-        for tool in storcli storcli64 perccli perccli64 arcconf ssacli hpssacli; do
+        for tool in "${VENDOR_TOOLS[@]}"; do
             local bin="config/includes.chroot/usr/local/bin/${tool}"
             [[ -f "$bin" ]] || continue
             if file -b "$bin" 2>/dev/null | grep -qi "aarch64"; then
@@ -188,7 +195,7 @@ preflight() {
             fi
             warn "moved x86 ${tool} out of the ${ARCH} image tree (vendor/cli/amd64/)"
         done
-        for tool in storcli storcli64 perccli perccli64 arcconf ssacli hpssacli; do
+        for tool in "${VENDOR_TOOLS[@]}"; do
             local bin="vendor/cli/${ARCH}/${tool}"
             [[ -f "$bin" ]] || continue
             file -b "$bin" 2>/dev/null | grep -qi "aarch64" \
@@ -199,7 +206,7 @@ preflight() {
     local cli_dir="vendor/cli/${ARCH}"
     log "preflight: vendor tools for ${ARCH} (${cli_dir} or staged config/includes.chroot/usr/local/bin)"
     local found=0
-    for tool in storcli storcli64 perccli perccli64 arcconf ssacli hpssacli; do
+    for tool in "${VENDOR_TOOLS[@]}"; do
         local bin="${cli_dir}/${tool}"
         if [[ ! -e "$bin" ]]; then
             bin="config/includes.chroot/usr/local/bin/${tool}"
@@ -222,6 +229,9 @@ preflight() {
     done
     if [[ "$ARCH" != "amd64" ]]; then
         warn "  ssacli/perccli have no ${ARCH} build: HPE/Dell RAID management is amd64-only"
+    fi
+    if [[ "$ARCH" == "amd64" && ! -e "vendor/cli/amd64/hiraidadm" ]]; then
+        warn "  hiraidadm is arm64-only; Huawei HiRAID management is unavailable on amd64"
     fi
     if [[ "$found" -eq 0 ]]; then
         if [[ "$ALLOW_MISSING_TOOLS" == "1" || "$ARCH" != "amd64" ]]; then
@@ -384,12 +394,32 @@ stage_vendor_cli() {
         return 0
     fi
     install -d "$dest"
+
+    # Remove every member of a family before installing any of it.  Without
+    # this a leftover `storcli` (old build, or synced from a Windows checkout)
+    # shadows the freshly staged `storcli64` because detection tries `storcli`
+    # first.
+    local family member present removed=0
+    for family in "${VENDOR_FAMILIES[@]}"; do
+        present=0
+        for member in $family; do
+            [[ -f "${cli_dir}/${member}" ]] && present=1
+        done
+        (( present )) || continue
+        for member in $family; do
+            if [[ -f "${dest}/${member}" ]]; then
+                rm -f "${dest}/${member}"
+                removed=$((removed + 1))
+            fi
+        done
+    done
+
     local copied=0
     while IFS= read -r -d '' file; do
         install -m 0755 "$file" "${dest}/$(basename "$file")"
         copied=$((copied + 1))
     done < <(find "$cli_dir" -maxdepth 1 -type f -print0)
-    log "vendor CLI (${ARCH}): ${copied} file(s) staged from ${cli_dir}"
+    log "vendor CLI (${ARCH}): ${copied} staged, ${removed} stale name(s) removed"
 }
 
 stage_drivers() {

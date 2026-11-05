@@ -36,7 +36,6 @@ _DESTRUCTIVE = {
     RemoteTaskType.CREATE_RAID,
     RemoteTaskType.DELETE_RAID,
     RemoteTaskType.CLEAR_CONFIG,
-    RemoteTaskType.ERASE,
 }
 _READ_ONLY = {
     RemoteTaskType.REFRESH_HARDWARE,
@@ -45,6 +44,11 @@ _READ_ONLY = {
     RemoteTaskType.LIST_VDS,
 }
 ALL_TASK_TYPES = sorted(task.value for task in RemoteTaskType)
+#: Erase remains local-only; the enum value is kept so old envelopes get a
+#: deterministic rejection instead of an "unknown task type" error.
+ADVERTISED_TASK_TYPES = sorted(
+    task.value for task in RemoteTaskType if task is not RemoteTaskType.ERASE
+)
 
 
 class TaskPhase(str, Enum):
@@ -328,6 +332,7 @@ class AgentLimits:
 
 
 __all__ = [
+    "ADVERTISED_TASK_TYPES",
     "ALL_TASK_TYPES",
     "AgentLimits",
     "AgentResult",

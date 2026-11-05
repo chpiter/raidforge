@@ -9,9 +9,10 @@ from flask import Blueprint, current_app, jsonify, request, send_file
 
 from .. import __version__
 from ..auth import ApiError
-from ..db import get_db
+from ..db import get_db, transaction
 from ..services import agents as agent_service
 from ..services import evidence as evidence_service
+from ..services import sessions as session_service
 from ..services import tasks as task_service
 from ..services import topology as topology_service
 from ..task_types import get_task_type, get_task_types
@@ -55,6 +56,26 @@ def _bool_value(value: Any, default: bool, name: str) -> bool:
             fields=[{"field": name, "message": f"{name} 必须是 bool"}],
         )
     return value
+
+
+_TRUE_VALUES = {"1", "true", "yes", "on"}
+_FALSE_VALUES = {"", "0", "false", "no", "off"}
+
+
+def _query_bool(value: Any, default: bool, name: str) -> bool:
+    if value is None:
+        return default
+    text = str(value).strip().lower()
+    if text in _TRUE_VALUES:
+        return True
+    if text in _FALSE_VALUES:
+        return False
+    raise ApiError(
+        f"{name} 必须是 bool",
+        code="invalid_params",
+        status=400,
+        fields=[{"field": name, "message": f"{name} 必须是 bool"}],
+    )
 
 
 def _int_value(value: Any, default: int, name: str, minimum: int, maximum: int) -> int:
@@ -113,6 +134,9 @@ def list_agents():
         get_db(),
         status=(request.args.get("status") or "").strip(),
         query=(request.args.get("q") or "").strip(),
+        include_deleted=_query_bool(
+            request.args.get("include_deleted"), False, "include_deleted"
+        ),
         page=page,
         page_size=page_size,
         now=utcnow(),
@@ -129,10 +153,22 @@ def get_agent(agent_id: str):
     if row is None:
         raise ApiError("agent 不存在", code="agent_not_found", status=404)
     payload = agent_service.agent_payload(row, utcnow(), settings.agent_offline_seconds)
+    payload["deleted"] = agent_service.is_deleted(conn, row["server_sn"])
     payload["task_counts"] = agent_service.agent_task_counts(conn, agent_id)
     recent, _ = task_service.list_tasks(conn, agent_id=agent_id, page=1, page_size=5)
     payload["recent_tasks"] = recent
     return jsonify({"agent": payload})
+
+
+@bp.post("/agents/<agent_id>/delete")
+def delete_agent(agent_id: str):
+    settings = _settings()
+    conn = get_db()
+    with transaction(conn):
+        marker = agent_service.soft_delete_agent(
+            conn, agent_id, utcnow(), settings.agent_offline_seconds
+        )
+    return jsonify({"deleted": marker})
 
 
 @bp.get("/agents/<agent_id>/tasks")
@@ -207,6 +243,12 @@ def list_tasks():
 def create_task():
     payload = _json_body()
     task_type = str(payload.get("type") or "").strip()
+    if task_type == "erase_disks":
+        raise ApiError(
+            "远程擦除已禁用，请在本地 TUI 执行",
+            code="remote_erase_disabled",
+            status=403,
+        )
     if get_task_type(task_type) is None:
         raise ApiError(f"未知任务类型 {task_type!r}", code="unsupported_task_type", status=400)
 
@@ -299,6 +341,86 @@ def download_evidence(evidence_id: int):
 @bp.get("/task-types")
 def task_types():
     return jsonify({"items": get_task_types()})
+
+
+@bp.get("/sessions")
+def list_sessions():
+    page, page_size = _pagination()
+    query = str(request.args.get("q") or "").strip()
+    has_report = _query_bool(request.args.get("has_report"), False, "has_report")
+    items, total = session_service.list_sessions(
+        _settings(), page, page_size, query, has_report=has_report
+    )
+    return jsonify({"items": items, "total": total, "page": page, "page_size": page_size})
+
+
+@bp.get("/sessions/<session_id>")
+def get_session(session_id: str):
+    return jsonify({"session": session_service.get_session(_settings(), session_id)})
+
+
+@bp.get("/sessions/<session_id>/events")
+def session_events(session_id: str):
+    limit = _int_value(request.args.get("limit"), 500, "limit", 1, session_service.MAX_EVENTS)
+    session_dir = session_service.resolve_session(_settings(), session_id)
+    return jsonify({"items": session_service.read_events(session_dir, limit)})
+
+
+@bp.get("/sessions/<session_id>/file")
+def session_file(session_id: str):
+    session_dir = session_service.resolve_session(_settings(), session_id)
+    target = session_service.resolve_file(session_dir, str(request.args.get("path") or ""))
+    suffix = target.suffix.lower()
+    download = str(request.args.get("download") or "").strip().lower() in {"1", "true", "yes"}
+    if suffix == session_service.REPORT_SUFFIX and not download:
+        raise ApiError(
+            "DOCX 请使用报告预览接口",
+            code="use_report_preview",
+            status=415,
+        )
+    mimetype = session_service.content_type(target)
+    if suffix in {".cast"}:
+        mimetype = "text/plain; charset=utf-8"
+    inline = suffix in session_service.PREVIEW_SUFFIXES and not download
+    response = send_file(
+        target,
+        mimetype=mimetype,
+        as_attachment=not inline,
+        download_name=target.name,
+    )
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    return response
+
+
+@bp.get("/sessions/<session_id>/report")
+def session_report(session_id: str):
+    settings = _settings()
+    session_dir = session_service.resolve_session(settings, session_id)
+    detail = session_service.get_session(settings, session_id)
+    report = detail.get("report")
+    if not report:
+        raise ApiError("会话没有 DOCX 报告", code="report_not_found", status=404)
+    path = session_service.resolve_file(session_dir, report["path"])
+    return jsonify(
+        {
+            "filename": report["name"],
+            "path": report["path"],
+            "size": report["size"],
+            "sha256": report["sha256"],
+            "html": session_service.docx_to_html(path),
+        }
+    )
+
+
+@bp.get("/sessions/<session_id>/download")
+def session_download(session_id: str):
+    settings = _settings()
+    session_dir = session_service.resolve_session(settings, session_id)
+    root = Path(settings.session_dir).resolve()
+    archive = (root / f"{session_dir.name}.tar.gz").resolve()
+    if not archive.is_relative_to(root) or not archive.is_file():
+        raise ApiError("会话归档不存在", code="archive_not_found", status=404)
+    return send_file(archive, as_attachment=True, download_name=archive.name)
 
 
 __all__ = ["bp"]

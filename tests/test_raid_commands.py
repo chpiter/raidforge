@@ -69,6 +69,23 @@ def hpe_disk(index: int) -> DiskInfo:
     )
 
 
+def huawei_controller() -> ControllerInfo:
+    return ControllerInfo(index=0, vendor=Vendor.HUAWEI, binary="hiraidadm")
+
+
+def huawei_disk(index: int) -> DiskInfo:
+    return DiskInfo(
+        disk_id=f"c0e0s{index}",
+        controller_index=0,
+        vendor=Vendor.HUAWEI,
+        medium=Medium.HDD,
+        protocol=Protocol.SAS,
+        enclosure=0,
+        slot=index,
+        size_bytes=1000,
+    )
+
+
 # ---------------------------------------------------------------------------
 # LSI / Broadcom
 # ---------------------------------------------------------------------------
@@ -339,4 +356,54 @@ def test_hpe_delete_and_clear():
     assert [plan.argv for plan in clear_plans(controller)] == [
         ["ssacli", "ctrl", "slot=0", "ld", "all", "delete", "forced"],
         ["ssacli", "ctrl", "slot=0", "modify", "clearconfig", "forced"],
+    ]
+
+
+# ---------------------------------------------------------------------------
+# Huawei HiRAID
+# ---------------------------------------------------------------------------
+def test_huawei_create_levels_and_per_disk():
+    controller = huawei_controller()
+    disks = [huawei_disk(0), huawei_disk(1)]
+    raid1 = create_plans(controller, build_layout(RaidLevel.RAID1, disks, name="vd0"))
+    assert [plan.argv for plan in raid1] == [
+        [
+            "hiraidadm",
+            "c0",
+            "create",
+            "vd",
+            "raid1",
+            "name=vd0",
+            "size=max_left",
+            "drives=0:0,0:1",
+        ]
+    ]
+
+    raid10 = create_plans(
+        controller, build_layout(RaidLevel.RAID10, disks + [huawei_disk(2), huawei_disk(3)])
+    )[0]
+    assert "raid10" in raid10.argv
+    assert raid10.argv[-1] == "drives=0:0,0:1,0:2,0:3"
+
+    per_disk = create_plans(
+        controller,
+        build_layout(RaidLevel.RAID0, disks, mode=Raid0Mode.PER_DISK, name="RG0"),
+    )
+    assert len(per_disk) == 2
+    assert per_disk[0].argv[-1] == "drives=0:0"
+    assert per_disk[1].argv[-1] == "drives=0:1"
+
+
+def test_huawei_delete_and_clear():
+    controller = huawei_controller()
+    volume = VolumeInfo(volume_id="vd1", controller_index=0, vendor=Vendor.HUAWEI, level="RAID1")
+    assert delete_plans(controller, [volume])[0].argv == [
+        "hiraidadm",
+        "c0:vd1",
+        "delete",
+        "noprompt",
+    ]
+    assert [plan.argv for plan in clear_plans(controller)] == [
+        ["hiraidadm", "c0", "reset", "defaultconfig", "noprompt"],
+        ["hiraidadm", "c0", "clear", "fncfg"],
     ]

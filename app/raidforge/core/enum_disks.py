@@ -12,6 +12,7 @@ import re
 from typing import Any, Dict, List, Optional, Tuple
 
 from ..config import Config
+from .hiraidadm import parse_kv as parse_hiraidadm_kv, parse_pdlist as parse_hiraidadm_pdlist
 from .models import ControllerInfo, DetectionResult, DiskInfo, Medium, Protocol, Vendor
 from .utils import parse_decimal_size, run_cmd
 
@@ -428,6 +429,67 @@ def parse_nvme_list(text: str) -> List[DiskInfo]:
 
 
 # --------------------------------------------------------------------------
+# Huawei HiRAID (hiraidadm)
+# --------------------------------------------------------------------------
+def parse_hiraidadm_pd(text: str, controller: ControllerInfo) -> List[DiskInfo]:
+    """Parse ``hiraidadm cN show pdlist`` into :class:`DiskInfo` objects."""
+
+    disks: List[DiskInfo] = []
+    for row in parse_hiraidadm_pdlist(text):
+        enclosure = _to_int(row.get("enc"))
+        slot = _to_int(row.get("slot"))
+        if enclosure is None or slot is None:
+            continue
+        medium = _medium_from_text(row.get("media type") or row.get("media"))
+        if medium is Medium.UNKNOWN:
+            rotation = _to_int(row.get("spin"))
+            if rotation == 0:
+                medium = Medium.SSD
+            elif rotation is not None:
+                medium = Medium.HDD
+        protocol = _protocol_from_text(row.get("intf"))
+        disks.append(
+            DiskInfo(
+                disk_id=f"c{controller.index}e{enclosure}s{slot}",
+                controller_index=controller.index,
+                vendor=Vendor.HUAWEI,
+                medium=medium,
+                protocol=protocol,
+                enclosure=enclosure,
+                slot=slot,
+                device_number=_to_int(row.get("did")),
+                model=row.get("model", ""),
+                firmware=row.get("fw", ""),
+                size_bytes=parse_decimal_size(row.get("capacity", "")),
+                raid_state=row.get("status", ""),
+                raw=dict(row),
+            )
+        )
+    disks.sort(key=lambda disk: (disk.enclosure or 0, disk.slot or 0))
+    return disks
+
+
+def augment_hiraidadm_details(
+    cfg: Config, binary: str, disks: List[DiskInfo], raw_outputs: List[Tuple[str, str]]
+) -> None:
+    """Fill serial/firmware from ``hiraidadm cN:eM:sK show`` (bounded calls)."""
+
+    for disk in disks[:64]:
+        if disk.enclosure is None or disk.slot is None:
+            continue
+        address = f"c{disk.controller_index}:e{disk.enclosure}:s{disk.slot}"
+        detail = run_cmd([binary, address, "show"], timeout=cfg.enum_timeout)
+        if not detail.ok:
+            continue
+        raw_outputs.append((f"huawei_{address.replace(':', '_')}_show.txt", detail.stdout))
+        fields = parse_hiraidadm_kv(detail.stdout)
+        disk.serial = fields.get("serial number", "") or disk.serial
+        disk.firmware = disk.firmware or fields.get("firmware version", "")
+        disk.raid_state = disk.raid_state or fields.get("status", "")
+        disk.raw.update(fields)
+
+
+# --------------------------------------------------------------------------
 # dispatcher
 # --------------------------------------------------------------------------
 def enumerate_disks(cfg: Config, detection: DetectionResult) -> Tuple[List[DiskInfo], List[Tuple[str, str]]]:
@@ -450,10 +512,20 @@ def enumerate_disks(cfg: Config, detection: DetectionResult) -> Tuple[List[DiskI
         "lsi": "storcli",
         "pmc": "arcconf",
         "hpe": "ssacli",
+        "huawei": "hiraidadm",
     }.get(detection.vendor.value, "")
 
     for controller in detection.controllers:
-        if controller.vendor is Vendor.LSI:
+        if controller.vendor is Vendor.HUAWEI:
+            tool = binary or "hiraidadm"
+            result = run_cmd(
+                [tool, f"c{controller.index}", "show", "pdlist"], timeout=cfg.enum_timeout
+            )
+            raw_outputs.append((f"huawei_c{controller.index}_pdlist.txt", result.stdout))
+            found = parse_hiraidadm_pd(result.stdout, controller)
+            augment_hiraidadm_details(cfg, tool, found, raw_outputs)
+            disks.extend(found)
+        elif controller.vendor is Vendor.LSI:
             result = run_cmd(
                 [binary or "storcli", f"/c{controller.index}/eall/sall", "show", "J"], timeout=cfg.enum_timeout
             )

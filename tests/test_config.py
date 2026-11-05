@@ -201,3 +201,10 @@ def test_raid_defaults_are_controller_stripe_and_fast_init(monkeypatch, tmp_path
         overrides={"raid": {"init": "garbage"}},
     )
     assert fallback.raid.init == "fast"
+
+
+def test_hiraidadm_is_the_first_detection_rung(monkeypatch, tmp_path):
+    config_dir = _isolate(monkeypatch, tmp_path)
+    cfg = config_mod.load_config(config_dir=str(config_dir))
+    assert cfg.tools.detection_order[0] == "hiraidadm"
+    assert "storcli" in cfg.tools.detection_order

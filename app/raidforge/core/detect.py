@@ -19,6 +19,7 @@ from dataclasses import dataclass
 from typing import Callable, Dict, List, Optional, Sequence, Tuple
 
 from ..config import Config
+from .hiraidadm import controller_entries, controller_fields, is_success
 from .models import ControllerInfo, DetectionAttempt, DetectionResult, Vendor
 from .utils import run_cmd, which
 
@@ -31,6 +32,7 @@ TOOL_ALIASES: Dict[str, str] = {
     "perccli64": "perccli",
     "hpssacli": "ssacli",
     "sg_scan": "sg3_utils",
+    "hiraid": "hiraidadm",
 }
 
 
@@ -186,6 +188,44 @@ def _controllers_from_ssacli(cfg: Config, binary: str = "ssacli") -> List[Contro
     return controllers
 
 
+def _controllers_from_hiraidadm(cfg: Config, binary: str = "hiraidadm") -> List[ControllerInfo]:
+    """Enumerate Huawei HiRAID controllers via ``hiraidadm show allctrl``."""
+
+    listing = run_cmd([binary, "show", "allctrl"], timeout=cfg.detect_timeout)
+    if not listing.ok or not is_success(listing.stdout):
+        return []
+    entries = controller_entries(listing.stdout)
+    controllers: List[ControllerInfo] = []
+    for entry in entries:
+        try:
+            index = int(entry.get("controller id", "0"))
+        except ValueError:
+            continue
+        detail = run_cmd([binary, f"c{index}", "show"], timeout=cfg.detect_timeout)
+        fields = controller_fields(detail.stdout) if detail.ok else {}
+        serial = fields.get("serial", "")
+        if not serial:
+            # safety.check_controller rejects controllers without a serial;
+            # the SAS address is stable and unique per card.
+            serial = str(fields.get("sas_address", "") or "").removeprefix("0x")
+        controllers.append(
+            ControllerInfo(
+                index=index,
+                vendor=Vendor.HUAWEI,
+                model=str(fields.get("model", "") or entry.get("device name", "")).strip(),
+                firmware=str(fields.get("firmware", "")).strip(),
+                serial=serial.strip(),
+                binary=binary,
+                raw_json={
+                    "allctrl": listing.stdout,
+                    "show": detail.stdout,
+                    "pci_address": entry.get("pci address", ""),
+                },
+            )
+        )
+    return controllers
+
+
 def _controllers_from_sg3_utils(cfg: Config, binary: str = "") -> List[ControllerInfo]:
     """Generic path: no controller, only direct attached devices."""
 
@@ -212,6 +252,7 @@ class _Rung:
 
 
 _LADDER: List[_Rung] = [
+    _Rung("hiraidadm", ("hiraidadm",), Vendor.HUAWEI, "huawei", _controllers_from_hiraidadm),
     _Rung("storcli", ("storcli", "storcli64"), Vendor.LSI, "lsi", _controllers_from_storcli),
     _Rung("perccli", ("perccli", "perccli64"), Vendor.LSI, "lsi", _controllers_from_storcli),
     _Rung("arcconf", ("arcconf",), Vendor.PMC, "adaptec", _controllers_from_arcconf),
@@ -219,7 +260,7 @@ _LADDER: List[_Rung] = [
     _Rung("sg3_utils", ("sg_scan",), Vendor.GENERIC, "generic", _controllers_from_sg3_utils),
 ]
 
-_DEFAULT_ORDER = ["storcli", "perccli", "arcconf", "ssacli", "sg3_utils"]
+_DEFAULT_ORDER = ["hiraidadm", "storcli", "perccli", "arcconf", "ssacli", "sg3_utils"]
 
 
 def detect_controllers(cfg: Config) -> DetectionResult:

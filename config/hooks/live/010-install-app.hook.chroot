@@ -122,9 +122,24 @@ if [ -d /etc/raidforge/keys ]; then
 fi
 
 # ---- vendor RAID CLIs ------------------------------------------------------
+# live-build's includes copy is additive: a reused chroot keeps files that were
+# removed from config/includes.chroot.  A stale `storcli` (old build) would
+# shadow the freshly staged `storcli64`, and a stale `hpssacli` would shadow
+# the new `ssacli`.  Drop the alias when the canonical 64-bit binary is present;
+# the shims below recreate it pointing at the right binary.
+if [ -f /usr/local/bin/storcli64 ]; then
+    rm -f /usr/local/bin/storcli
+fi
+if [ -f /usr/local/bin/perccli64 ]; then
+    rm -f /usr/local/bin/perccli
+fi
+if [ -f /usr/local/bin/ssacli ]; then
+    rm -f /usr/local/bin/hpssacli
+fi
+
 # includes.chroot keeps the host mode, and vendor archives commonly unpack as
 # 0644; core/detect.py probes them with exec, so normalise the bit here.
-for tool in storcli storcli64 perccli perccli64 arcconf ssacli hpssacli; do
+for tool in storcli storcli64 perccli perccli64 arcconf ssacli hpssacli hiraidadm; do
     if [ -f "/usr/local/bin/${tool}" ]; then
         chmod 0755 "/usr/local/bin/${tool}"
         echo "vendor tool ready: ${tool}"

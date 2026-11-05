@@ -39,6 +39,12 @@ vendor/drivers/
 `catalog.json` 里没有的新型号，可以补一条 `devices` 记录（vendor/class 或精确
 `vendor:device`），并把对应模块写进 `modules`。
 
+**华为 HiRAID**：卡使用非主线 `hiraid` 驱动（aarch64-only），catalog 已登记
+`19e5:0104 → hiraid`。把华为的 DKMS 源码包放进 `arm64/dkms/<name>/`（含 `dkms.conf`）
+或预编译 `.deb` 放进 `arm64/debs/`；`070-drivers.hook.chroot` 安装后会自动写
+`/etc/modules-load.d/raidforge-drivers.conf` 保证开机加载。缺少驱动时构建会告警，
+`hiraidadm` 将看不到卡。
+
 ## 架构
 
 `amd64` 与 `arm64` 的载荷严格分开。构建时只安装当前架构目录下的内容，并通过

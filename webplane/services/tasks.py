@@ -120,6 +120,12 @@ def create_task(
     created_by: str = "webplane-ui",
     now: Optional[datetime] = None,
 ) -> Any:
+    if task_type == "erase_disks":
+        raise ApiError(
+            "远程擦除已禁用，请在本地 TUI 执行",
+            code="remote_erase_disabled",
+            status=403,
+        )
     now = now or utcnow()
     task_id = new_task_id()
     created_at = iso(now)
@@ -219,7 +225,8 @@ def claim_next_task(conn, settings, agent_id: str, server_sn: str, now: Optional
         for _attempt in range(2):
             row = conn.execute(
                 "SELECT * FROM tasks WHERE agent_id = ? AND status = 'pending' "
-                "AND expires_at > ? ORDER BY priority ASC, created_at ASC LIMIT 1",
+                "AND type != 'erase_disks' AND expires_at > ? "
+                "ORDER BY priority ASC, created_at ASC LIMIT 1",
                 (agent_id, iso(now)),
             ).fetchone()
             if row is None:
@@ -252,6 +259,12 @@ def start_task(conn, task_id: str, lease_id: str, agent_id: str, now: Optional[d
     row = get_task(conn, task_id)
     if row is None:
         raise ApiError("任务不存在", code="task_not_found", status=404)
+    if row["type"] == "erase_disks":
+        raise ApiError(
+            "远程擦除已禁用，请在本地 TUI 执行",
+            code="remote_erase_disabled",
+            status=403,
+        )
     if row["status"] in TERMINAL:
         raise ApiError("任务已终态", code="task_terminal", status=409)
     _require_lease(row, lease_id)
@@ -501,6 +514,29 @@ def cancel_task(conn, task_id: str, reason: str = "", now: Optional[datetime] = 
     return get_task(conn, task_id)
 
 
+def cancel_remote_erase_tasks(
+    conn,
+    reason: str = "远程擦除已禁用，请在本地 TUI 执行",
+    now: Optional[datetime] = None,
+) -> int:
+    """Cancel erase tasks left over from before remote erase was removed."""
+
+    now = now or utcnow()
+    rows = conn.execute(
+        "SELECT task_id FROM tasks WHERE type = 'erase_disks' "
+        "AND status IN ('pending', 'leased', 'running')"
+    ).fetchall()
+    cancelled = 0
+    for row in rows:
+        try:
+            cancel_task(conn, row["task_id"], reason=reason, now=now)
+        except ApiError as exc:
+            log.warning("cannot cancel legacy erase task %s: %s", row["task_id"], exc)
+            continue
+        cancelled += 1
+    return cancelled
+
+
 def list_tasks(
     conn,
     *,
@@ -566,12 +602,22 @@ def task_detail(conn, task_id: str) -> Optional[Dict[str, Any]]:
 
 def stats(conn, offline_seconds: int = 45, now: Optional[datetime] = None) -> Dict[str, Any]:
     now = now or utcnow()
-    from .agents import agent_status  # local import avoids a cycle at module load
+    from .agents import (  # local import avoids a cycle at module load
+        agent_status,
+        deleted_server_sns,
+    )
 
+    deleted_sns = deleted_server_sns(conn)
     agents_total = 0
     online = 0
     offline = 0
-    for row in conn.execute("SELECT last_heartbeat_at FROM agents").fetchall():
+    deleted = 0
+    for row in conn.execute(
+        "SELECT server_sn, last_heartbeat_at FROM agents"
+    ).fetchall():
+        if row["server_sn"] in deleted_sns:
+            deleted += 1
+            continue
         agents_total += 1
         state = agent_status(row["last_heartbeat_at"] or "", now, offline_seconds)
         if state == "online":
@@ -591,7 +637,12 @@ def stats(conn, offline_seconds: int = 45, now: Optional[datetime] = None) -> Di
         "SELECT COUNT(*) AS files, COALESCE(SUM(size), 0) AS bytes FROM evidence"
     ).fetchone()
     return {
-        "agents": {"total": agents_total, "online": online, "offline": offline},
+        "agents": {
+            "total": agents_total,
+            "online": online,
+            "offline": offline,
+            "deleted": deleted,
+        },
         "tasks": {
             "pending": task_counts.get("pending", 0),
             "leased": task_counts.get("leased", 0),
@@ -652,6 +703,7 @@ def expire_stale(conn, settings, now: Optional[datetime] = None) -> int:
 __all__ = [
     "TERMINAL",
     "apply_progress",
+    "cancel_remote_erase_tasks",
     "cancel_task",
     "claim_next_task",
     "create_task",

@@ -6,6 +6,8 @@ import ControllerDetail from './views/ControllerDetail.vue'
 import Tasks from './views/Tasks.vue'
 import TaskNew from './views/TaskNew.vue'
 import TaskDetail from './views/TaskDetail.vue'
+import Evidence from './views/Evidence.vue'
+import EvidenceDetail from './views/EvidenceDetail.vue'
 
 const routes = [
   { path: '/', name: 'dashboard', component: Dashboard, meta: { title: '概览' } },
@@ -26,7 +28,14 @@ const routes = [
   { path: '/agents/:id', redirect: (to) => `/servers/${to.params.id}` },
   { path: '/tasks', name: 'tasks', component: Tasks, meta: { title: '任务' } },
   { path: '/tasks/new', name: 'task-new', component: TaskNew, meta: { title: '新建任务' } },
-  { path: '/tasks/:id', name: 'task-detail', component: TaskDetail, meta: { title: '任务详情' } }
+  { path: '/tasks/:id', name: 'task-detail', component: TaskDetail, meta: { title: '任务详情' } },
+  { path: '/evidence', name: 'evidence', component: Evidence, meta: { title: '证据与报告' } },
+  {
+    path: '/evidence/:sessionId',
+    name: 'evidence-detail',
+    component: EvidenceDetail,
+    meta: { title: '证据详情' }
+  }
 ]
 
 export default createRouter({

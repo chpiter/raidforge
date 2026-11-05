@@ -12,7 +12,8 @@
     "ssacli": ["amd64"],
     "hpssacli": ["amd64"],
     "perccli": ["amd64"],
-    "perccli64": ["amd64"]
+    "perccli64": ["amd64"],
+    "hiraidadm": ["arm64"]
   },
   "profiles": {
     "minimal": [],
@@ -63,6 +64,14 @@
       "packages": [],
       "cli": null,
       "note": "On-board SAS controller of TaiShan/Kunpeng servers."
+    },
+    "hiraid": {
+      "label": "Huawei HiRAID Hi1880 / SP686C",
+      "packages": [],
+      "cli": "hiraidadm",
+      "arches": ["arm64"],
+      "load": true,
+      "note": "Out-of-tree, aarch64 only, not in Debian 6.1. Supply Huawei's DKMS or .deb under vendor/drivers/arm64/."
     },
     "ixgbe": {
       "label": "Intel 82598/82599 10GbE",
@@ -206,6 +215,12 @@
       "name": "Huawei Kunpeng on-board Ethernet",
       "match": {"vendor": "19e5", "class": "0200"},
       "module": "hns3"
+    },
+    {
+      "id": "huawei-hiraid",
+      "name": "Huawei HiRAID Hi1880 / SP686C",
+      "match": {"vendor": "19e5", "class": "0104"},
+      "module": "hiraid"
     }
   ]
 }

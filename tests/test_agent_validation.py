@@ -30,33 +30,27 @@ def test_unknown_task_type_is_rejected():
     assert exc.value.error_code == "unsupported_task_type"
 
 
+def test_erase_is_local_only():
+    with pytest.raises(TaskRejected) as exc:
+        parse_task(make_envelope(task_type="erase_disks", params={}))
+    assert exc.value.error_code == "remote_erase_disabled"
+    assert exc.value.field == "type"
+
+
 def test_wwn_format_and_both_identities_required():
     with pytest.raises(TaskRejected) as exc:
         parse_task(
             make_envelope(
-                task_type="erase_disks",
+                task_type="create_raid",
                 params={
                     "controller_id": "lsi:SN1",
-                    "mode": "overwrite",
-                    "verify": False,
+                    "name": "x",
+                    "raid_level": "RAID0",
                     "pds": [{"serial": "ZA1", "wwn": "5000c500a1b2c3d4", "expected_size_bytes": 100}],
                 },
             )
         )
     assert exc.value.error_code == "invalid_params"
-    with pytest.raises(TaskRejected) as exc:
-        parse_task(
-            make_envelope(
-                task_type="erase_disks",
-                params={
-                    "controller_id": "lsi:SN1",
-                    "mode": "overwrite",
-                    "verify": True,
-                    "pds": [{"serial": "ZA1", "wwn": "0x5000c500a1b2c3d4", "expected_size_bytes": 100}],
-                },
-            )
-        )
-    assert exc.value.error_code == "invalid_params"  # verify=true 未实现
 
 
 def test_create_rejects_unsupported_policies():

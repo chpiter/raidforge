@@ -7,7 +7,7 @@ import threading
 from pathlib import Path
 
 from .db import connect
-from .services.tasks import expire_stale
+from .services.tasks import cancel_remote_erase_tasks, expire_stale
 
 log = logging.getLogger(__name__)
 _STARTED: set[str] = set()
@@ -35,6 +35,7 @@ def _loop(settings) -> None:
             conn = connect(settings.db_path)
             try:
                 expire_stale(conn, settings)
+                cancel_remote_erase_tasks(conn)
             finally:
                 conn.close()
         except Exception as exc:  # pragma: no cover - loop must not die

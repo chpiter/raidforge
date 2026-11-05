@@ -1,0 +1,21 @@
+==========================================
+    Hiraidadm   Information
+==========================================
+    Name: hiraidadm
+    Version :1.2.0.2
+    Build Time: Nov 15 2022 22:07:55
+==========================================
+==========================================
+    Status Code = 0
+    Status = Success
+    Description = None
+==========================================
+
+Index   Enc   Slot  DID   Intf    Media Type        Status                PreFail   SlowDrive     LinkSpd
+Capacity        SecType     FUA   SED   Spin        FW          Model
+0       0     0     5     SAS     HDD               Unconfigured Good     No        No            12G
+1.200TB         512E        Y     N     7200        4.10        ST1200MM0009
+1       0     1     6     SAS     SSD               Unconfigured Good     No        No            12G
+960GB           512E        Y     Y     -           4.10        HSSD960G
+2       0     2     7     SAS     HDD               Online                No        No            12G
+1.200TB         512E        Y     N     7200        4.10        ST1200MM0009

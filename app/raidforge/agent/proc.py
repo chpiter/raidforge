@@ -41,6 +41,8 @@ def _version_argv(binary: str) -> List[str]:
         return [binary, "version"]
     if "arcconf" in name:
         return [binary]
+    if "hiraidadm" in name:
+        return [binary, "--help"]
     if "sg_scan" in name or "smartctl" in name:
         return [binary, "--version"]
     return [binary, "--version"]
@@ -58,6 +60,7 @@ def tool_version(binary: str, runner: Optional[Runner] = None, timeout: float = 
 
     runner = runner or Runner()
     version = ""
+    fallback = ""
     try:
         result = runner.run(_version_argv(path), timeout=timeout)
         text = (result.stdout or "") + "\n" + (result.stderr or "")
@@ -66,8 +69,15 @@ def tool_version(binary: str, runner: Optional[Runner] = None, timeout: float = 
             if not line:
                 continue
             match = re.search(r"(?:version|ver\.?)[ :=]*([0-9][0-9A-Za-z._-]{1,31})", line, re.I)
-            version = match.group(1) if match else line[:80]
-            break
+            if match:
+                version = match.group(1)
+                break
+            if not fallback:
+                # hiraidadm prints a banner line before its "Version :" line;
+                # keep scanning instead of recording the banner as the version.
+                fallback = line[:80]
+        if not version:
+            version = fallback
     except Exception as exc:  # pragma: no cover - runner 已保证不抛
         log.warning("工具版本探测失败 %s: %s", path, exc)
         version = ""

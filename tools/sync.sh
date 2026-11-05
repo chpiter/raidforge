@@ -215,7 +215,7 @@ chmod 0755 auto/* config/hooks/live/*.hook.* 2>/dev/null; \
 chmod 0755 config/includes.chroot/usr/local/sbin/* 2>/dev/null; \
 find vendor/cli -mindepth 2 -maxdepth 2 -type f -exec chmod 0755 {} + 2>/dev/null; \
 find tests -name '*.sh' -exec chmod 0755 {} + 2>/dev/null; \
-chmod 0755 config/includes.chroot/usr/local/bin/storcli config/includes.chroot/usr/local/bin/storcli64 config/includes.chroot/usr/local/bin/perccli config/includes.chroot/usr/local/bin/perccli64 config/includes.chroot/usr/local/bin/arcconf config/includes.chroot/usr/local/bin/ssacli config/includes.chroot/usr/local/bin/hpssacli 2>/dev/null; \
+chmod 0755 config/includes.chroot/usr/local/bin/storcli config/includes.chroot/usr/local/bin/storcli64 config/includes.chroot/usr/local/bin/perccli config/includes.chroot/usr/local/bin/perccli64 config/includes.chroot/usr/local/bin/arcconf config/includes.chroot/usr/local/bin/ssacli config/includes.chroot/usr/local/bin/hpssacli config/includes.chroot/usr/local/bin/hiraidadm 2>/dev/null; \
 if [ -d config/includes.chroot/etc/raidforge/keys ]; then chmod 0700 config/includes.chroot/etc/raidforge/keys; find config/includes.chroot/etc/raidforge/keys -type f -exec chmod 0600 {} +; fi; \
 true" >/dev/null
 }

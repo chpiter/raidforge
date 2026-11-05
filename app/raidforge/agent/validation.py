@@ -25,7 +25,6 @@ _RAID_LEVELS = {
     "10": "RAID10",
     "raid10": "RAID10",
 }
-_MODES = ("thorough", "overwrite", "erase", "blockerase", "sanitize")
 _READ_TYPES = {
     RemoteTaskType.REFRESH_HARDWARE,
     RemoteTaskType.LIST_CONTROLLERS,
@@ -167,6 +166,13 @@ def parse_task(envelope: Dict[str, Any]) -> RemoteTask:
             "unsupported_task_type", f"未知任务类型 {raw_type!r}", field="type"
         ) from None
 
+    if task_type is RemoteTaskType.ERASE:
+        raise TaskRejected(
+            "remote_erase_disabled",
+            "远程擦除已禁用，请在本地 TUI 执行",
+            field="type",
+        )
+
     server_sn = envelope.get("server_sn")
     if not isinstance(server_sn, str) or not server_sn.strip() or len(server_sn) > 128:
         raise TaskRejected("invalid_params", "server_sn 非法", field="server_sn")
@@ -214,8 +220,6 @@ def validate_params(task: RemoteTask) -> Dict[str, Any]:
         return _delete_params(task.params)
     if task.type is RemoteTaskType.CLEAR_CONFIG:
         return _clear_params(task.params)
-    if task.type is RemoteTaskType.ERASE:
-        return _erase_params(task.params)
     raise TaskRejected("unsupported_task_type", "未知任务类型", field="type")
 
 
@@ -327,40 +331,6 @@ def _clear_params(params: Dict[str, Any]) -> Dict[str, Any]:
         "controller_id": controller_id,
         "include_foreign": _optional_bool(params, "include_foreign", False),
         "expected_vd_count": int(count),
-        "dry_run": _optional_bool(params, "dry_run", False),
-    }
-
-
-def _erase_params(params: Dict[str, Any]) -> Dict[str, Any]:
-    allowed = {
-        "controller_id",
-        "mode",
-        "passes",
-        "verify",
-        "allow_raid_member",
-        "pds",
-        "dry_run",
-    }
-    _reject_extra(params, allowed)
-    controller_id = _require_str(params, "controller_id", maximum=128)
-    mode = _require_str(params, "mode", maximum=32).lower()
-    if mode not in _MODES:
-        raise TaskRejected("unsupported_erase_mode", f"不支持的擦除模式 {mode!r}", field="mode")
-    passes = _optional_int(params, "passes", 1, minimum=1, maximum=3)
-    verify = _optional_bool(params, "verify", True)
-    if verify:
-        raise TaskRejected(
-            "invalid_params",
-            "core 不提供擦除完成校验（厂商命令异步返回），verify=true 未实现",
-            field="verify",
-        )
-    return {
-        "controller_id": controller_id,
-        "mode": mode,
-        "passes": passes,
-        "verify": False,
-        "allow_raid_member": _optional_bool(params, "allow_raid_member", False),
-        "pds": _selectors(params),
         "dry_run": _optional_bool(params, "dry_run", False),
     }
 

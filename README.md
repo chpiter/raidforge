@@ -159,33 +159,37 @@ live-build 20230502 / 磁盘 ≥ 12 GB。低于 2 GB 内存时 `mksquashfs` 有 
 
 ### 2.2 厂商工具获取（必须手工放置）
 
-这些 CLI 是厂商分发物，**不能随仓库分发**。把解压出的 ELF 二进制直接放进
-`config/includes.chroot/usr/local/bin/`，文件名必须精确为下表中的名字（64 位版本
-`storcli64`/`perccli64` 也可以直接放；镜像会按需创建兼容 shim）：
+这些 CLI 是厂商分发物，**不能随仓库分发**。推荐放到按架构分开的
+`vendor/cli/amd64/` 或 `vendor/cli/arm64/`；`build.sh` 只暂存目标架构目录里的文件，
+并在暂存前清掉同族的旧文件（例如旧的 `storcli` 不会压过新的 `storcli64`）。
+`config/includes.chroot/usr/local/bin/` 的旧布局仍兼容 amd64。
 
-| 工具 | 来源 | 常见包内路径 |
-|---|---|---|
-| `storcli` / `storcli64` | Broadcom / OEM 支持页 → "StorCLI MR7.x" | `storcli_all_os/Linux/storcli`（有些包是 `univ_viva_cli_rel/storcli_all_os/Linux/storcli`） |
-| `perccli` / `perccli64` | Dell 支持页 → "PERC CLI" | `perccli` / `perccli64`（与 storcli 同语法） |
-| `arcconf` | Microsemi / Adaptec → "ARCCONF CLI" | `cmdline/arcconf`（也有 `ARCCONF_*.tar.gz`） |
-| `ssacli` / `hpssacli` | HPE Support Center → "SSA CLI" | `ssacli-*.rpm` → `usr/sbin/ssacli`；或 `.deb` → `dpkg-deb -x` |
+| 工具 | 架构 | 来源 | 常见包内路径 |
+|---|---|---|---|
+| `storcli` / `storcli64` | amd64, arm64 | Broadcom / OEM 支持页 → "StorCLI MR7.x" | `storcli_all_os/Linux/storcli`（有些包是 `univ_viva_cli_rel/storcli_all_os/Linux/storcli`） |
+| `perccli` / `perccli64` | amd64 | Dell 支持页 → "PERC CLI" | `perccli` / `perccli64`（与 storcli 同语法） |
+| `arcconf` | amd64, arm64 | Microsemi / Adaptec → "ARCCONF CLI" | `cmdline/arcconf`（也有 `ARCCONF_*.tar.gz` / debianarm 包） |
+| `ssacli` / `hpssacli` | amd64 | HPE Support Center → "SSA CLI" | `ssacli-*.rpm` → `usr/sbin/ssacli`；或 `.deb` → `dpkg-deb -x` |
+| `hiraidadm` | arm64 | 华为 HiRAID / SP686C 工具包 | `hiraidadm`（静态 ELF；需要 `hiraid` 驱动，见 §2.3） |
 
 ```bash
-# storcli（示例）
-unzip StorCLI_MR7.20.zip
-cp versionChangeSet/univ_viva_cli_rel/storcli_all_os/Linux/storcli \
-   config/includes.chroot/usr/local/bin/storcli
+# 按架构放置（推荐）
+cp storcli64 vendor/cli/amd64/
+cp ssacli    vendor/cli/amd64/
+cp arcconf   vendor/cli/amd64/
+cp storcli64 hiraidadm vendor/cli/arm64/     # arm64 镜像
+
+# 旧布局（仅 amd64）
+cp storcli config/includes.chroot/usr/local/bin/storcli
 chmod 755 config/includes.chroot/usr/local/bin/storcli
 
 # ssacli（rpm 示例）
 rpm2cpio ssacli-*.x86_64.rpm | cpio -idmv
-cp usr/sbin/ssacli config/includes.chroot/usr/local/bin/ssacli
-chmod 755 config/includes.chroot/usr/local/bin/ssacli
+cp usr/sbin/ssacli vendor/cli/amd64/ssacli
 
 # arcconf（示例）
 tar xf arcconf_v3*.tar.gz
-cp linux_x64/cmdline/arcconf config/includes.chroot/usr/local/bin/arcconf
-chmod 755 config/includes.chroot/usr/local/bin/arcconf
+cp linux_x64/cmdline/arcconf vendor/cli/amd64/arcconf
 ```
 
 自检：
@@ -224,7 +228,14 @@ Debian 12（kernel 6.1）在 amd64 与 arm64 上都内置了现场常见阵列�
 | Intel E810 | `ice` | `firmware-misc-nonfree`（DDP） | — |
 | Mellanox ConnectX-4/5/6 | `mlx5_core` + `mlxfw` | 卡载 | — |
 | Kunpeng 920 板载 SAS / 网卡 | `hisi_sas_v3_hw` / `hns3` | 无 | — |
+| 华为 HiRAID Hi1880 / SP686C | `hiraid`（非主线，aarch64） | 无 | `hiraidadm`（仅 arm64） |
 | QLogic FC HBA | `qla2xxx` | `firmware-qlogic`（`--profile full`） | — |
+
+> **HiRAID 驱动**：`hiraid` 是华为私有驱动，不在 Debian 6.1 主线内。把华为提供的
+> DKMS 源码包放到 `vendor/drivers/arm64/dkms/<name>/`（含 `dkms.conf`）或预编译
+> `.deb` 放到 `vendor/drivers/arm64/debs/`，`070-drivers.hook.chroot` 会安装并写
+> `/etc/modules-load.d/raidforge-drivers.conf`。驱动缺失时构建会告警，hiraidadm 将
+> 看不到卡（探测自动回退 storcli）。
 
 镜像默认安装 `firmware-linux-free` + `firmware-misc-nonfree`（精简，约 +30–60 MB）；
 `--profile full` 追加 qlogic/bnx2x/cavium 等全套（约 +150–250 MB）。**不要**直接装
@@ -709,7 +720,8 @@ GET  /api/raidforge/agent/tasks/{task_id}/cancel_requested
    厂商/型号、固件、工具、物理盘数、RAID 数与数据采集时间。
 3. **阵列卡详情**（`/servers/:agentId/controllers/:controllerId`）：
    - **硬盘** Tab：serial、WWN、容量、介质、状态、RAID 成员、启动保护；可多选后
-     “擦除磁盘”或“用选中盘建 RAID”。
+     “用选中盘建 RAID”。**硬盘擦除只能在本地 TUI 的 Physical 页执行，webplane 不提供
+     远程擦除任务。**
    - **RAID** Tab：VD 列表与成员；可“创建 RAID”“删除 VD”“清除控制器配置”。
 
 数据来源与刷新：
@@ -731,6 +743,37 @@ GET /api/cp/agents/<agent_id>/controllers/<controller_id>
 ```
 
 旧 `/agents`、`/agents/:id` 会重定向到 `/servers`、`/servers/:id`。UI 仍无认证。
+
+#### 5.2.2 证据与报告查询（HTTP 上传）
+
+现场把 `report.transport` 设为 `http` 后，整份擦除会话会通过 `POST /sessions`
+上传到 webplane，并解包到 `WEBPLANE_SESSION_DIR/<session_id>/`。webplane 新增只读的
+“证据与报告”页面（`/evidence`）用于查询和预览：
+
+- **会话列表**：按会话 ID、服务器 SN、最后事件搜索；显示接收时间、大小、事件数、
+  文件数与是否含 DOCX 报告。
+- **会话详情**：
+  - **报告**：服务端把 DOCX 的标题、段落与表格转成转义后的 HTML 进行预览；内嵌图片
+    不展开，统一在“截图”页查看；原 DOCX 可下载。
+  - **文件**：列出 manifest/events/controller_raw/snapshots 等文件；文本/JSON 内联
+    预览，SVG/PNG 直接显示，其他类型提供下载。
+  - **截图**：`snapshots/*.svg|png` 缩略图网格与大图预览。
+  - **事件**：`events.jsonl` 归一化后按时间线展示。
+  - **清单**：`manifest.json` 原始 JSON。
+
+对应只读 API（与 UI 一样无认证，仅限内网/VPN）：
+
+```
+GET /api/cp/sessions?page=&page_size=&q=
+GET /api/cp/sessions/<session_id>
+GET /api/cp/sessions/<session_id>/events?limit=
+GET /api/cp/sessions/<session_id>/file?path=&download=
+GET /api/cp/sessions/<session_id>/report
+GET /api/cp/sessions/<session_id>/download
+```
+
+路径解析会拒绝 `..`、绝对路径、符号链接与隐藏文件；内联文本预览上限 2 MiB。
+SSH/rsync 通道上传的证据仍保存在 SSH 接收端，不在 webplane 的 `/evidence` 页面中。
 
 #### 5.2.2 Agent 客户端接入
 
@@ -1108,7 +1151,8 @@ python3 -m raidforge --set report.transport=http --set report.http_port=8080
 
 ## 7. 阵列卡支持矩阵与命令表（约束 5/6/7）
 
-探测优先级固定为 **storcli → perccli → arcconf → ssacli → sg3_utils**，第一个「存在且能应答」的工具胜出，
+探测优先级固定为 **hiraidadm → storcli → perccli → arcconf → ssacli → sg3_utils**，
+第一个「存在且能应答」的工具胜出（hiraidadm 只随 arm64 镜像分发，找不到控制器时自动回退），
 后续全部流程按该厂商走；每次探测（含失败）都写进 `attempts` 存证据。同一 rung 支持多个
 二进制名：`storcli/storcli64`、`perccli/perccli64`、`ssacli/hpssacli`。
 
@@ -1118,6 +1162,7 @@ python3 -m raidforge --set report.transport=http --set report.http_port=8080
 | Dell PERC | `perccli show J`（或 `perccli64`） | `perccli /c{c}/eall/sall show J` | 同 storcli（同一语法） |
 | PMC/Adaptec | `arcconf list` | `arcconf getconfigjson {c}`（失败回落 `arcconf getconfig {c} pd` 文本） | `MediaType`／`RotationRate` |
 | HPE | `ssacli ctrl all show`（或 `hpssacli`） | `ssacli ctrl slot={c} pd all show detail` | `Rotational Speed` 含数字=HDD，含 Solid=SSD |
+| 华为 HiRAID | `hiraidadm show allctrl` | `hiraidadm c{c} show pdlist` + `c{c}:e{e}:s{s} show` | `Media Type`；缺失时按 `Spin` 是否为 0 |
 | Generic | `sg_scan` 存在 | `lsscsi -g` + `smartctl -i {dev}` + `nvme list -o json` | `Rotation Rate`（**唯一判据**） |
 
 **RAID 读取 / 管理命令**（`app/raidforge/core/raid/commands.py` 与各 provider）：
@@ -1127,16 +1172,18 @@ python3 -m raidforge --set report.transport=http --set report.http_port=8080
 | LSI/PERC | `storcli /cN/vall show all J` | `add vd r0/r1/r5/r10 drives=E:S,... size=all [strip=N] [pdperarray=2] [name=]` | `/cN/vM delete force` | `/cN/vall delete force` + `/cN/fall delete` |
 | Adaptec | `arcconf getconfigjson N` / `getconfig N ld` | `create N logicaldrive [stripesize N] [name X] method quick MAX <level> <ch> <dev>... noprompt` | `delete N logicaldrive M noprompt` | `delete N array ALL noprompt` + `uninit N all` |
 | HPE | `ssacli ctrl slot=N ld all show detail` + `pd all show` | `create type=ld drives=ref,... raid=0/1/5/1+0 [ss=N] [parityinitializationmethod=rapid（仅 RAID5）] [label=X] forced` | `ld M delete forced` | `ld all delete forced` + `modify clearconfig forced` |
+| 华为 HiRAID | `hiraidadm cN show vdlist` + `cN:vdM show pdarray` | `create vd raid0/1/5/10 name=X size=max_left drives=e:s,... [susize=N]` | `cN:vdM delete noprompt` | `reset defaultconfig noprompt` + `clear fncfg`（VERIFY） |
 | Generic | 无 | 不支持 | 不支持 | 不支持 |
 
 > ⚠️ **RAID 命令同样需要现场核对**：源码中标 `VERIFY` 的项包括
 > `vall delete force` 的 force 接受度、`arcconf stripesize/name/method` 的位置、
 > HPE `parityinitializationmethod=rapid` 在旧固件上的接受度、
 > `uninit` 是否接受 `noprompt`、`ssacli clearconfig` 是否隐含删 LD、HPE 紧凑
-> `pd all show` 的 unassigned 分组、以及 RAID10 span 顺序。上线前请先用
-> `raidforge --print-raid-plan` 只读核对拓扑与空闲盘，再在实验室盘上按
-> 「RAID0 单卷 → RAID0 一盘一卷 → RAID1 → RAID5 → RAID10 → 删除 VD → 清除配置」
-> 顺序验证；确认后只改对应模板一行。
+> `pd all show` 的 unassigned 分组、以及 RAID10 span 顺序。HiRAID 侧：
+> `size=max_left`、`susize=`、`reset defaultconfig` 是否等同「删全部 VD + 清 foreign」
+> 也需真机核对。上线前请先用 `raidforge --print-raid-plan` 只读核对拓扑与空闲盘，
+> 再在实验室盘上按「RAID0 单卷 → RAID0 一盘一卷 → RAID1 → RAID5 → RAID10 → 删除 VD
+> → 清除配置」顺序验证；确认后只改对应模板一行。
 
 命令构造集中在 `app/raidforge/core/commands.py`，改擦除命令只需改那张表：
 
@@ -1144,6 +1191,7 @@ python3 -m raidforge --set report.transport=http --set report.http_port=8080
 |---|---|---|
 | LSI | `storcli /c{c}/e{e}/s{s} start erase {thorough\|simple\|normal}` | `patterna`（blockerase）/ `secure`（sanitize，需 SED） |
 | PMC | `arcconf TASK START {c} DEVICE {ch} {dev} erase NOPROMPT` | `secureerase`（blockerase）/ `sanitize` |
+| 华为 HiRAID | `hiraidadm c{c}:e{e}:s{s} start erase mode={thorough\|simple\|normal}` | `start sanitize mode=blockerase` / `mode=cryptoerase`（sanitize，需 SED） |
 | HPE | `ssacli ctrl slot={c} pd {ref} modify erase erasepattern=overwrite forced` | `modify erase erasepattern=block`（blockerase）/ `erasepattern=crypto`（sanitize，需 SED） |
 | Generic | SAS → `sg_format --format [--verify]`；SATA → `hdparm --security-erase[-enhanced]` | SAS → `sg_sanitize --block/--crypto`；SATA → `blkdiscard`；NVMe → `nvme format --ses=1/2` |
 
@@ -1265,6 +1313,10 @@ Windows 的 Git Bash 会把 `/root/...` 改写成盘符路径，调用前加 `MS
 * **arm64**：只能 UEFI/GRUB 引导（syslinux 无 arm64 端口），Kunpeng 需关闭
   Secure Boot；`ssacli`/`perccli` 没有 aarch64 版本，ARM 上 HPE/Dell 卡只能走
   generic 模式；VM 内 TCG 全量构建预计 1–2 小时，QEMU 烟测不能替代真机验证。
+* **华为 HiRAID**：`hiraidadm` 仅 aarch64，且依赖非主线 `hiraid` 驱动（需放进
+  `vendor/drivers/arm64`）；驱动未加载时探测会静默回退 storcli。`pdlist`/`vdlist`
+  解析按华为文档与工具 strings 实现，上线前必须用真机输出核对（fixtures 的抓取
+  方法见 §7 VERIFY 提示）；UI 暂不暴露 RAID6/50/60。
 * **驱动**：`vendor/drivers/<arch>` 里的 `.deb`/`.ko` 必须与镜像内核
   （bookworm 6.1，当前 6.1.0-54-amd64）ABI 匹配；换内核后要重新构建。显式
   `--probe` 时，识别到但 Debian 内核没有驱动的存储/网络设备会让构建失败，

@@ -30,6 +30,7 @@ _DEFAULT_BINARY = {
     Vendor.LSI: "storcli",
     Vendor.PMC: "arcconf",
     Vendor.HPE: "ssacli",
+    Vendor.HUAWEI: "hiraidadm",
 }
 
 
@@ -66,6 +67,12 @@ def _hpe_ref(disk: DiskInfo) -> str:
     return disk.controller_ref
 
 
+def _huawei_ref(disk: DiskInfo) -> str:
+    if disk.enclosure is None or disk.slot is None:
+        raise ValueError(f"{disk.disk_id}: missing enclosure/slot address")
+    return f"{disk.enclosure}:{disk.slot}"
+
+
 def _level_token(level: RaidLevel, vendor: Vendor) -> str:
     if vendor is Vendor.LSI:
         return f"r{level_number(level)}"
@@ -73,6 +80,8 @@ def _level_token(level: RaidLevel, vendor: Vendor) -> str:
         return str(level_number(level))
     if vendor is Vendor.HPE:
         return "1+0" if level is RaidLevel.RAID10 else str(level_number(level))
+    if vendor is Vendor.HUAWEI:
+        return f"raid{level_number(level)}"
     raise ValueError(f"unsupported vendor for RAID commands: {vendor.value}")
 
 
@@ -91,6 +100,11 @@ def _pmc_volume_token(volume_id: str) -> str:
 def _hpe_volume_token(volume_id: str) -> str:
     text = str(volume_id or "").strip()
     return text[2:] if text.lower().startswith("ld") else text
+
+
+def _huawei_volume_token(volume_id: str) -> str:
+    text = str(volume_id or "").strip()
+    return text if text.lower().startswith("vd") else f"vd{text}"
 
 
 def _create_plan(
@@ -200,6 +214,38 @@ def _hpe_create(controller: ControllerInfo, layout: RaidLayout, disks: List[Disk
     )
 
 
+def _huawei_create(controller: ControllerInfo, layout: RaidLayout, disks: List[DiskInfo], name: str) -> RaidCommandPlan:
+    refs = ",".join(_huawei_ref(disk) for disk in disks)
+    # Documented form:
+    #   hiraidadm c0 create vd raid1 name=vd0 size=100000 drives=0:0,0:1
+    # VERIFY: size=max_left is accepted by the referenced firmware; fall back to
+    # an explicit MB value if a card rejects it.
+    argv = [
+        _binary(controller),
+        f"c{controller.index}",
+        "create",
+        "vd",
+        _level_token(layout.level, Vendor.HUAWEI),
+    ]
+    if name:
+        argv.append(f"name={name}")
+    argv.append("size=max_left")
+    argv.append(f"drives={refs}")
+    if layout.stripe_kb:
+        argv.append(f"susize={layout.stripe_kb}")
+    span = [disk.disk_id for disk in disks]
+    return _create_plan(
+        controller,
+        argv,
+        f"create {layout.level.value} on controller {controller.index}",
+        disks,
+        layout.level,
+        span,
+        "hiraidadm creates the VD with the controller default init policy; "
+        "the VD may be visible before initialisation completes",
+    )
+
+
 def create_plans(controller: ControllerInfo, layout: RaidLayout) -> List[RaidCommandPlan]:
     """Build create commands for ``layout`` on ``controller``.
 
@@ -216,6 +262,7 @@ def create_plans(controller: ControllerInfo, layout: RaidLayout) -> List[RaidCom
         Vendor.LSI: _lsi_create,
         Vendor.PMC: _pmc_create,
         Vendor.HPE: _hpe_create,
+        Vendor.HUAWEI: _huawei_create,
     }[controller.vendor]
 
     if layout.level is RaidLevel.RAID0 and layout.mode is Raid0Mode.PER_DISK:
@@ -257,6 +304,13 @@ def delete_plans(controller: ControllerInfo, volumes: List[VolumeInfo]) -> List[
                 _hpe_volume_token(volume.volume_id),
                 "delete",
                 "forced",
+            ]
+        elif controller.vendor is Vendor.HUAWEI:
+            argv = [
+                _binary(controller),
+                f"c{controller.index}:{_huawei_volume_token(volume.volume_id)}",
+                "delete",
+                "noprompt",
             ]
         else:  # pragma: no cover - enum is closed
             raise ValueError(f"unsupported vendor: {controller.vendor.value}")
@@ -326,6 +380,19 @@ def clear_plans(controller: ControllerInfo) -> List[RaidCommandPlan]:
                 [binary, "ctrl", f"slot={index}", "modify", "clearconfig", "forced"],
                 "clear controller configuration",
                 "VERIFY: firmware variants differ on whether clearconfig also deletes LDs",
+            ),
+        ]
+    elif controller.vendor is Vendor.HUAWEI:
+        steps = [
+            (
+                [binary, f"c{index}", "reset", "defaultconfig", "noprompt"],
+                "reset controller configuration",
+                "VERIFY: reset defaultconfig must delete every VD; confirm on hardware",
+            ),
+            (
+                [binary, f"c{index}", "clear", "fncfg"],
+                "clear foreign configuration metadata",
+                "Destroys foreign RAID metadata on drives attached to this controller",
             ),
         ]
     else:  # pragma: no cover - enum is closed

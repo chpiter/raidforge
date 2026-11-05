@@ -15,7 +15,7 @@
           <el-option
             v-for="agent in agents"
             :key="agent.agent_id"
-            :label="`${agent.agent_id}${agent.server_sn ? ' · ' + agent.server_sn : ''}`"
+            :label="`${agent.agent_id}${agent.server_sn ? ' · ' + agent.server_sn : ''}${agent.deleted ? '（已删除）' : ''}`"
             :value="agent.agent_id"
           />
         </el-select>
@@ -125,7 +125,7 @@ const { run, loading, error } = usePolling(async () => {
 
 onMounted(async () => {
   const [agentData, typeData] = await Promise.all([
-    getAgents({ page: 1, page_size: 200 }),
+    getAgents({ page: 1, page_size: 200, include_deleted: 1 }),
     getTaskTypes()
   ])
   agents.value = agentData.items || []

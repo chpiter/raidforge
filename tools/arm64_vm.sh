@@ -221,6 +221,7 @@ cmd_sync() {
         --exclude .git --exclude chroot --exclude binary --exclude .build \
         --exclude cache --exclude bootstrap --exclude .tmp --exclude artifacts \
         --exclude .venv --exclude '*.iso' --exclude '*.iso.sha256' \
+        --exclude vendor/wheels \
         -e "ssh ${ssh_args[*]}" \
         "${SHARE}/" root@127.0.0.1:/root/raidforge/
 }

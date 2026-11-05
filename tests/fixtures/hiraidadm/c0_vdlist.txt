@@ -1,0 +1,15 @@
+==========================================
+    Hiraidadm   Information
+==========================================
+    Name: hiraidadm
+    Version :1.2.0.2
+    Build Time: Nov 15 2022 22:07:55
+==========================================
+==========================================
+    Status Code = 0
+    Status = Success
+    Description = None
+==========================================
+
+ID    Name        RAID Level      Status    Type      Capacity      SUSz    SecSz   RCache      WCache      RealWCache
+0     vd0         1               normal    normal    1.454TB       64KB    512B    No Ahead    WT          WT

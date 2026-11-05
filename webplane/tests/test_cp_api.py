@@ -38,16 +38,6 @@ def params_for(task_type: str):
             "include_foreign": False,
             "dry_run": True,
         }
-    if task_type == "erase_disks":
-        return {
-            "controller_id": CONTROLLER,
-            "mode": "thorough",
-            "passes": 1,
-            "verify": False,
-            "allow_raid_member": False,
-            "pds": [PD],
-            "dry_run": True,
-        }
     if task_type == "abort_current":
         return {"reason": "operator requested", "target_task_id": ""}
     raise AssertionError(task_type)
@@ -61,7 +51,6 @@ ALL_TYPES = [
     "create_raid",
     "delete_raid",
     "clear_config",
-    "erase_disks",
     "abort_current",
 ]
 
@@ -80,7 +69,7 @@ def test_task_types_endpoint(client):
     items = response.get_json()["items"]
     assert {item["type"] for item in items} == set(ALL_TYPES)
     destructive = {item["type"] for item in items if item["destructive"]}
-    assert destructive == {"create_raid", "delete_raid", "clear_config", "erase_disks"}
+    assert destructive == {"create_raid", "delete_raid", "clear_config"}
     for item in items:
         assert item["template"]
         assert item["fields"]
@@ -121,18 +110,21 @@ def test_create_raid_accepts_zero_stripe_as_controller_default(
     assert task["params"]["init"] == "fast"
 
 
+def test_remote_erase_is_rejected(client, register_agent, agent_headers):
+    register_agent(agent_headers)
+    response = client.post(
+        "/api/cp/tasks",
+        json={"agent_id": "agent-1", "type": "erase_disks", "params": {}},
+    )
+    assert response.status_code == 403
+    body = response.get_json()
+    assert body["error_code"] == "remote_erase_disabled"
+    assert "本地 TUI" in body["message"]
+
+
 @pytest.mark.parametrize(
     "task_type,params",
     [
-        (
-            "erase_disks",
-            {
-                "controller_id": CONTROLLER,
-                "mode": "thorough",
-                "verify": True,
-                "pds": [PD],
-            },
-        ),
         (
             "create_raid",
             {
@@ -334,6 +326,93 @@ def test_task_list_filters_and_pagination(client, register_agent, agent_headers,
 
     by_agent = client.get("/api/cp/agents/agent-1/tasks").get_json()
     assert by_agent["total"] == 2
+
+
+def _make_offline(settings, agent_id: str = "agent-1") -> None:
+    conn = connect(settings.db_path)
+    try:
+        conn.execute(
+            "UPDATE agents SET last_heartbeat_at = ? WHERE agent_id = ?",
+            ("2000-01-01T00:00:00Z", agent_id),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def test_delete_offline_agent_soft_delete(
+    client, settings, register_agent, agent_headers, create_task
+):
+    register_agent(agent_headers)
+    create_task("agent-1", "list_vds")
+    _make_offline(settings)
+
+    response = client.post("/api/cp/agents/agent-1/delete")
+    assert response.status_code == 200
+    assert response.get_json()["deleted"]["server_sn"] == "SN-1"
+
+    listing = client.get("/api/cp/agents").get_json()
+    assert listing["total"] == 0
+
+    listing_all = client.get("/api/cp/agents?include_deleted=1").get_json()
+    assert listing_all["total"] == 1
+    assert listing_all["items"][0]["deleted"] is True
+
+    detail = client.get("/api/cp/agents/agent-1").get_json()["agent"]
+    assert detail["deleted"] is True
+
+    tasks = client.get("/api/cp/agents/agent-1/tasks").get_json()
+    assert tasks["total"] == 1
+
+    stats = client.get("/api/cp/stats").get_json()
+    assert stats["agents"]["total"] == 0
+    assert stats["agents"]["deleted"] == 1
+
+
+def test_delete_online_agent_rejected(client, register_agent, agent_headers):
+    register_agent(agent_headers)
+    response = client.post("/api/cp/agents/agent-1/delete")
+    assert response.status_code == 409
+    assert response.get_json()["error_code"] == "agent_online"
+    assert client.get("/api/cp/agents").get_json()["total"] == 1
+
+
+def test_delete_requires_server_sn(client, settings, register_agent, agent_headers):
+    register_agent(agent_headers, server_sn="")
+    _make_offline(settings)
+    response = client.post("/api/cp/agents/agent-1/delete")
+    assert response.status_code == 409
+    assert response.get_json()["error_code"] == "server_sn_missing"
+
+
+def test_delete_unknown_agent_and_idempotent(client, settings, register_agent, agent_headers):
+    response = client.post("/api/cp/agents/ghost/delete")
+    assert response.status_code == 404
+    assert response.get_json()["error_code"] == "agent_not_found"
+
+    register_agent(agent_headers)
+    _make_offline(settings)
+    assert client.post("/api/cp/agents/agent-1/delete").status_code == 200
+    assert client.post("/api/cp/agents/agent-1/delete").status_code == 200
+
+
+def test_heartbeat_revives_deleted_agent(client, settings, register_agent, agent_headers):
+    register_agent(agent_headers)
+    _make_offline(settings)
+    assert client.post("/api/cp/agents/agent-1/delete").status_code == 200
+
+    register_agent(agent_headers)
+
+    listing = client.get("/api/cp/agents").get_json()
+    assert listing["total"] == 1
+    assert "deleted" not in listing["items"][0]
+
+    detail = client.get("/api/cp/agents/agent-1").get_json()["agent"]
+    assert detail["deleted"] is False
+
+    stats = client.get("/api/cp/stats").get_json()
+    assert stats["agents"]["total"] == 1
+    assert stats["agents"]["deleted"] == 0
 
 
 def test_stats_online_then_offline(settings, client, register_agent, agent_headers):

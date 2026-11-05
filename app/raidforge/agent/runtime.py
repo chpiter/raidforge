@@ -295,7 +295,6 @@ class AgentRuntime:
             RemoteTaskType.CREATE_RAID.value,
             RemoteTaskType.DELETE_RAID.value,
             RemoteTaskType.CLEAR_CONFIG.value,
-            RemoteTaskType.ERASE.value,
         }
         if not task_id or not lease_id:
             self.store.set_current_task(None)

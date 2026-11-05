@@ -116,7 +116,7 @@ def test_admission_limits_remote_and_destructive():
     assert admission.can_accept(_task("tsk_00000009", "lse_00000009", RemoteTaskType.LIST_PDS)) is False
 
     other = RemoteAdmission(_FakeRunner(), lambda task: make_task(TaskKind.REMOTE, task.task_id))
-    erase = _task("tsk_00000010", "lse_00000010", RemoteTaskType.ERASE)
-    erase2 = _task("tsk_00000011", "lse_00000011", RemoteTaskType.ERASE)
-    assert other.submit_remote(erase, object()) == "accepted"
-    assert other.can_accept(erase2) is False
+    create = _task("tsk_00000010", "lse_00000010", RemoteTaskType.CREATE_RAID)
+    create2 = _task("tsk_00000011", "lse_00000011", RemoteTaskType.CREATE_RAID)
+    assert other.submit_remote(create, object()) == "accepted"
+    assert other.can_accept(create2) is False

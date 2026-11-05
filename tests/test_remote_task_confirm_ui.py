@@ -16,10 +16,10 @@ from raidforge.ui.screens.remote_task_confirm import RemoteTaskConfirmScreen  # 
 def _request(timeout: int = 60) -> ConfirmRequest:
     return ConfirmRequest(
         task_id="tsk_01JB8Z4Q2M",
-        task_type="erase_disks",
+        task_type="create_raid",
         server_sn="SN12345678",
         created_by="alice",
-        summary=["type erase_disks"],
+        summary=["type create_raid"],
         targets=["ZA1 / 0x5000c500a1b2c3d4 / 100 bytes"],
         commands=["storcli64 /c0/e32/s4 start erase normal"],
         topology_hash="9f2c" + "0" * 60,

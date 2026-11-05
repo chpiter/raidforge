@@ -40,6 +40,12 @@ CREATE UNIQUE INDEX IF NOT EXISTS ux_agents_server_sn
     ON agents(server_sn) WHERE server_sn <> '';
 CREATE INDEX IF NOT EXISTS ix_agents_heartbeat ON agents(last_heartbeat_at DESC);
 
+CREATE TABLE IF NOT EXISTS deleted_servers (
+    server_sn  TEXT PRIMARY KEY,
+    agent_id   TEXT NOT NULL DEFAULT '',
+    deleted_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS tasks (
     task_id              TEXT PRIMARY KEY,
     type                 TEXT NOT NULL,

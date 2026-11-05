@@ -14,7 +14,7 @@ from .bootmedia import probe as probe_boot_media
 from .client import AgentClient
 from .clock import SystemClock, rfc3339
 from .config import AgentConfig
-from .models import ALL_TASK_TYPES, AgentLimits
+from .models import ADVERTISED_TASK_TYPES, AgentLimits
 from .snapshot import SnapshotProvider
 from .version import AGENT_VERSION, PROTOCOL_VERSION
 
@@ -40,7 +40,7 @@ def _payload(cfg: AgentConfig, server_sn: str, snapshot: Any) -> Dict[str, Any]:
         "queue_depth": 0,
         "queue_max": 4,
         "capabilities": snapshot.heartbeat_capabilities() if snapshot is not None else {
-            "task_types": ALL_TASK_TYPES,
+            "task_types": ADVERTISED_TASK_TYPES,
             "dry_run": True,
             "evidence_kinds": [],
             "controllers": [],

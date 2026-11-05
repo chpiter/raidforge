@@ -42,7 +42,7 @@ tools:
   enum_timeout: 30
   # Constraint 12: never wait more than 60s for a submit.
   command_timeout: 60
-  detection_order: ["storcli", "perccli", "arcconf", "ssacli", "sg3_utils"]
+  detection_order: ["hiraidadm", "storcli", "perccli", "arcconf", "ssacli", "sg3_utils"]
   forced_tool: null          # e.g. "storcli" to skip the ladder
   enable_nvme: true
   vendor_bin_dir: "/usr/local/bin"

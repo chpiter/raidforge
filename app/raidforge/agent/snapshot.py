@@ -94,7 +94,6 @@ class HostSnapshot:
                 "create_raid",
                 "delete_raid",
                 "clear_config",
-                "erase_disks",
                 "abort_current",
             ],
             "dry_run": True,

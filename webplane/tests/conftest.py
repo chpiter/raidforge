@@ -77,7 +77,6 @@ def register_agent(client):
                     "create_raid",
                     "delete_raid",
                     "clear_config",
-                    "erase_disks",
                     "abort_current",
                 ],
                 "controllers": [

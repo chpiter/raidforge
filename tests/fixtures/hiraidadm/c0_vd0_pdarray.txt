@@ -1,0 +1,16 @@
+==========================================
+    Hiraidadm   Information
+==========================================
+    Name: hiraidadm
+    Version :1.2.0.2
+    Build Time: Nov 15 2022 22:07:55
+==========================================
+==========================================
+    Status Code = 0
+    Status = Success
+    Description = None
+==========================================
+
+Enc   Slot  DID   AssoEnc     AssoSlot    AssoDid     Intf    Media   Status      AssoStatus        Capacity      SecSz       Model
+0     0     5     -           -           -           SAS     HDD     Online      Normal            1.200TB       512E        ST1200MM0009
+0     1     6     -           -           -           SAS     SSD     Online      Normal            960GB         512E        HSSD960G

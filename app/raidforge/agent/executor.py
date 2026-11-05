@@ -9,15 +9,9 @@ from dataclasses import replace
 from datetime import timedelta
 from typing import Any, Dict, List, Optional, Tuple
 
-from ..core.erase import execute_plans
 from ..core.models import (
-    CommandPlan,
     RaidActionResult,
-    RaidCommandPlan,
-    RaidLayout,
     RaidStatus,
-    SubmitResult,
-    SubmitStatus,
     utc_now_iso,
 )
 from ..core.raid.execute import execute_raid_plans
@@ -168,12 +162,6 @@ def _run_destructive(
     dry_run = bool(task.params.get("dry_run")) or bool(runtime.cfg.dry_run)
     try:
         plan = _prepare(runtime, task, snapshot)
-        if isinstance(plan, adapters.ErasePlan) and plan.eta_seconds > task.timeout_seconds:
-            raise TaskRejected(
-                "invalid_params",
-                f"预计 {plan.eta_seconds}s 超过任务超时 {task.timeout_seconds}s",
-                field="passes",
-            )
         evidence = _open_evidence(runtime, task)
         if not evidence.check_space():
             raise TaskRejected("storage_full", "证据目录剩余空间不足 512MiB")
@@ -300,8 +288,6 @@ def _prepare(runtime: Any, task: RemoteTask, snapshot: HostSnapshot) -> Any:
         return adapters.build_delete(snapshot, task.params)
     if task.type is RemoteTaskType.CLEAR_CONFIG:
         return adapters.build_clear(runtime.cfg, snapshot, task.params)
-    if task.type is RemoteTaskType.ERASE:
-        return adapters.build_erase(runtime.cfg, snapshot, task.params)
     raise TaskRejected("unsupported_task_type", "不是破坏性任务", field="type")
 
 
@@ -342,11 +328,6 @@ def _execute_plan(
     watchdog.start()
     cfg = replace(runtime.cfg, dry_run=False)
 
-    def on_erase_progress(done: int, total: int, item: SubmitResult) -> None:
-        _record_submit(runtime, ctx, task, evidence, result, item, done, total)
-        if item.status is SubmitStatus.TIMEOUT:
-            abort_reason.setdefault("timeout", "timeout")
-
     def on_raid_progress(done: int, total: int, item: RaidActionResult) -> None:
         _record_raid(runtime, ctx, task, evidence, result, item, done, total)
         if item.status is RaidStatus.TIMEOUT:
@@ -355,23 +336,7 @@ def _execute_plan(
     result.status = ReportedStatus.RUNNING
     _progress(runtime, task, 0, 0, f"开始执行 {task.type.value}")
     try:
-        if isinstance(plan, adapters.ErasePlan):
-            total = len(plan.plans) * plan.passes
-            for pass_index in range(plan.passes):
-                if should_stop():
-                    break
-
-                def _on_erase(done: int, _total: int, item: SubmitResult, p: int = pass_index) -> None:
-                    on_erase_progress(p * len(plan.plans) + done, total, item)
-
-                execute_plans(
-                    plan.plans,
-                    evidence,
-                    cfg,
-                    on_progress=_on_erase,
-                    should_stop=should_stop,
-                )
-        elif isinstance(plan, adapters.CreatePlan):
+        if isinstance(plan, adapters.CreatePlan):
             execute_raid_plans(plan.plans, evidence, cfg, on_progress=on_raid_progress, should_stop=should_stop)
         elif isinstance(plan, adapters.DeletePlan):
             execute_raid_plans(plan.plans, evidence, cfg, on_progress=on_raid_progress, should_stop=should_stop)
@@ -409,8 +374,6 @@ def _execute_plan(
             result.fail("internal_error", "全部命令失败")
         elif failed:
             result.fail("internal_error", f"{len(failed)} 条命令失败")
-        elif isinstance(plan, adapters.ErasePlan):
-            result.warnings.append("erase submitted; vendor completion is asynchronous and unverified")
 
     # 后校验：失败保留已完成结果，标 verify_failed
     try:
@@ -439,8 +402,6 @@ def _verify(plan: Any, snapshot: HostSnapshot, task: RemoteTask) -> Tuple[bool, 
         return adapters.verify_delete(snapshot, controller_id, plan.volume.volume_id)
     if isinstance(plan, adapters.ClearPlan):
         return adapters.verify_clear(snapshot, controller_id, bool(task.params.get("include_foreign")))
-    if isinstance(plan, adapters.ErasePlan):
-        return adapters.verify_erase(snapshot, controller_id, plan)
     return True, {}
 
 
@@ -473,40 +434,6 @@ class _CancelWatchdog(threading.Thread):
             if response.status == 409 and response.error_code == "lease_superseded":
                 self.task.raw["_lease_superseded"] = True
                 return
-
-
-def _record_submit(
-    runtime: Any,
-    ctx: Any,
-    task: RemoteTask,
-    evidence: TaskEvidence,
-    result: AgentResult,
-    item: SubmitResult,
-    done: int,
-    total: int,
-) -> None:
-    record = CommandRecord(
-        seq=len(result.commands) + 1,
-        argv=list(item.argv),
-        exit_code=item.return_code,
-        started_at=rfc3339(runtime.clock.utcnow()),
-        duration_ms=int(item.duration_sec * 1000),
-        stdout_sha256=hashlib.sha256((item.stdout or "").encode("utf-8")).hexdigest(),
-        stderr_tail=(item.stderr or "")[-4000:],
-    )
-    result.commands.append(record)
-    try:
-        evidence.write_json(
-            f"cmd-{record.seq:03d}.json",
-            {"result": item.to_json_obj(), "command": record.to_dict()},
-            kind="command_output",
-            stage="execute",
-        )
-    except EvidenceLimitExceeded as exc:
-        result.evidence_incomplete = True
-        result.warnings.append(str(exc))
-    ctx.progress(done, total, f"{item.disk_id} {item.status.value} rc={item.return_code}")
-    _progress(runtime, task, done, total, f"{item.disk_id} {item.status.value}")
 
 
 def _record_raid(
@@ -595,14 +522,6 @@ def _plan_payload(plan: Any) -> Dict[str, Any]:
         payload.update({"vd_id": plan.volume.volume_id, "vd_name": plan.volume.name})
     elif isinstance(plan, adapters.ClearPlan):
         payload.update({"expected_vd_count": plan.vd_count})
-    elif isinstance(plan, adapters.ErasePlan):
-        payload.update(
-            {
-                "passes": plan.passes,
-                "per_disk_eta_seconds": plan.eta_seconds // max(1, len(plan.disks) * plan.passes),
-                "total_eta_seconds": plan.eta_seconds,
-            }
-        )
     return payload
 
 
@@ -620,7 +539,7 @@ def _snapshot_payload(snapshot: HostSnapshot) -> Dict[str, Any]:
 
 def _partial_payload(plan: Any, result: AgentResult) -> Dict[str, Any]:
     completed = [command.argv for command in result.commands if command.exit_code == 0]
-    total = len(plan.plans) * (plan.passes if isinstance(plan, adapters.ErasePlan) else 1)
+    total = len(plan.plans)
     return {"completed": completed, "not_started": max(0, total - len(result.commands))}
 
 
@@ -632,12 +551,7 @@ def _confirm_request(
     policy_override: bool,
 ) -> ConfirmRequest:
     targets: List[str] = []
-    if isinstance(plan, adapters.ErasePlan):
-        for disk in plan.disks:
-            targets.append(
-                f"{disk.serial} / {disk.wwn} / {disk.size_bytes} bytes ({disk.disk_id})"
-            )
-    elif isinstance(plan, adapters.CreatePlan):
+    if isinstance(plan, adapters.CreatePlan):
         for disk in plan.layout.disks:
             targets.append(f"{disk.serial} / {disk.wwn} / {disk.size_bytes} bytes ({disk.disk_id})")
         stripe_label = f"{plan.layout.stripe_kb}K" if plan.layout.stripe_kb else "控制器默认"

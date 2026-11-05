@@ -46,6 +46,57 @@ def find_by_server_sn(conn, server_sn: str):
     ).fetchone()
 
 
+def deleted_server_sns(conn) -> set[str]:
+    return {
+        row["server_sn"]
+        for row in conn.execute("SELECT server_sn FROM deleted_servers").fetchall()
+    }
+
+
+def is_deleted(conn, server_sn: str) -> bool:
+    if not server_sn:
+        return False
+    return (
+        conn.execute(
+            "SELECT 1 FROM deleted_servers WHERE server_sn = ?", (server_sn,)
+        ).fetchone()
+        is not None
+    )
+
+
+def revive_server_sn(conn, server_sn: str) -> int:
+    if not server_sn:
+        return 0
+    return conn.execute(
+        "DELETE FROM deleted_servers WHERE server_sn = ?", (server_sn,)
+    ).rowcount
+
+
+def soft_delete_agent(
+    conn, agent_id: str, now: datetime, offline_seconds: int
+) -> Dict[str, Any]:
+    row = get_agent(conn, agent_id)
+    if row is None:
+        raise ApiError("agent 不存在", code="agent_not_found", status=404)
+    server_sn = str(row["server_sn"] or "").strip()
+    if not server_sn:
+        raise ApiError(
+            "该服务器没有序列号，无法删除",
+            code="server_sn_missing",
+            status=409,
+        )
+    if agent_status(row["last_heartbeat_at"] or "", now, offline_seconds) != "offline":
+        raise ApiError("只能删除离线服务器", code="agent_online", status=409)
+    deleted_at = iso(now)
+    conn.execute(
+        "INSERT INTO deleted_servers (server_sn, agent_id, deleted_at) VALUES (?, ?, ?) "
+        "ON CONFLICT(server_sn) DO UPDATE SET agent_id = excluded.agent_id, "
+        "deleted_at = excluded.deleted_at",
+        (server_sn, agent_id, deleted_at),
+    )
+    return {"agent_id": agent_id, "server_sn": server_sn, "deleted_at": deleted_at}
+
+
 def ensure_placeholder_agent(conn, agent_id: str, server_sn: str, now: datetime) -> None:
     """Create an unknown agent row so a poller that beats its first heartbeat
     can still receive tasks."""
@@ -87,6 +138,7 @@ def upsert_heartbeat(
                 code="server_sn_conflict",
                 status=409,
             )
+        revive_server_sn(conn, server_sn)
 
     current = get_agent(conn, agent_id)
     now_iso = iso(now)
@@ -177,6 +229,10 @@ def agent_payload(row, now: datetime, offline_seconds: int) -> Dict[str, Any]:
         return {}
     key = row.keys()
     capabilities = loads(row["capabilities_json"], {})
+    if isinstance(capabilities, dict):
+        task_types = capabilities.get("task_types")
+        if isinstance(task_types, list):
+            capabilities["task_types"] = [item for item in task_types if item != "erase_disks"]
     hardware = loads(row["hardware_json"], {})
     last_heartbeat = row["last_heartbeat_at"] or ""
     elapsed = seconds_since(last_heartbeat, now) if last_heartbeat else None
@@ -214,6 +270,7 @@ def list_agents(
     *,
     status: str = "",
     query: str = "",
+    include_deleted: bool = False,
     page: int = 1,
     page_size: int = 20,
     now: Optional[datetime] = None,
@@ -223,10 +280,16 @@ def list_agents(
     rows = conn.execute(
         f"SELECT {_AGENT_COLUMNS} FROM agents ORDER BY last_heartbeat_at DESC, agent_id ASC"
     ).fetchall()
+    deleted_sns = deleted_server_sns(conn)
     items: List[Dict[str, Any]] = []
     needle = (query or "").strip().lower()
     for row in rows:
         payload = agent_payload(row, now, offline_seconds)
+        payload_deleted = payload["server_sn"] in deleted_sns
+        if payload_deleted and not include_deleted:
+            continue
+        if include_deleted:
+            payload["deleted"] = payload_deleted
         if needle:
             haystack = " ".join(
                 str(payload.get(key) or "")
@@ -259,9 +322,13 @@ __all__ = [
     "agent_payload",
     "agent_status",
     "agent_task_counts",
+    "deleted_server_sns",
     "ensure_placeholder_agent",
     "find_by_server_sn",
     "get_agent",
+    "is_deleted",
     "list_agents",
+    "revive_server_sn",
+    "soft_delete_agent",
     "upsert_heartbeat",
 ]

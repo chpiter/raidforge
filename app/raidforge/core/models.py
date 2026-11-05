@@ -27,6 +27,7 @@ class Vendor(str, Enum):
     LSI = "lsi"
     PMC = "pmc"
     HPE = "hpe"
+    HUAWEI = "huawei"
     GENERIC = "generic"
 
     @property
@@ -37,6 +38,7 @@ class Vendor(str, Enum):
             Vendor.LSI: "LSI / Broadcom RAID (storcli/perccli)",
             Vendor.PMC: "PMC / Adaptec / Microchip RAID (arcconf)",
             Vendor.HPE: "HPE Smart Array (ssacli/hpssacli)",
+            Vendor.HUAWEI: "Huawei HiRAID (hiraidadm)",
             Vendor.GENERIC: "Generic SAS/SATA/NVMe (sg3_utils + smartctl)",
         }[self]
 

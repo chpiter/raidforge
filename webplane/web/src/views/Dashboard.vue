@@ -1,6 +1,6 @@
 <template>
   <div class="rf-page">
-    <PageHeader title="概览" subtitle="RaidForge Agent 在线状态与最近任务">
+    <PageHeader title="概览" subtitle="RaidForge Agent 在线状态、最近任务与报告">
       <template #actions>
         <span class="rf-muted rf-mono">更新于 {{ lastText }}</span>
         <el-button :loading="loading" @click="run">刷新</el-button>
@@ -14,6 +14,26 @@
       <StatCard label="待派发" :value="stats?.tasks?.pending ?? '-'" hint="等待 agent 拉取" tone="warning" />
       <StatCard label="运行中" :value="runningText" hint="含已派发" tone="primary" />
       <StatCard label="24h 失败" :value="stats?.tasks?.failed_24h ?? '-'" hint="需要关注" tone="danger" />
+    </div>
+
+    <div class="rf-panel">
+      <div class="rf-toolbar">
+        <h3 class="rf-section-title">最近报告</h3>
+        <div class="spacer" />
+        <el-button link type="primary" @click="$router.push('/evidence')">查看全部</el-button>
+      </div>
+      <el-table :data="reports" size="default" @row-click="openReport">
+        <el-table-column label="报告文件" min-width="300" show-overflow-tooltip>
+          <template #default="{ row }">
+            <span class="rf-link rf-mono">{{ row.report_file }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column prop="server_sn" label="服务器 SN" min-width="160" />
+        <el-table-column label="接收时间" width="190">
+          <template #default="{ row }">{{ formatTime(row.received_at) }}</template>
+        </el-table-column>
+      </el-table>
+      <el-empty v-if="!reports.length" description="暂无 DOCX 报告" :image-size="60" />
     </div>
 
     <div class="rf-panel">
@@ -50,20 +70,23 @@ import { useRouter } from 'vue-router'
 import PageHeader from '../components/PageHeader.vue'
 import StatCard from '../components/StatCard.vue'
 import StatusTag from '../components/StatusTag.vue'
-import { getStats, getTasks } from '../api'
+import { getSessions, getStats, getTasks } from '../api'
 import { formatTime, usePolling } from '../composables/usePolling'
 
 const router = useRouter()
 const stats = ref(null)
 const tasks = ref([])
+const reports = ref([])
 
 const { run, loading, error, lastUpdated } = usePolling(async () => {
-  const [statsData, taskData] = await Promise.all([
+  const [statsData, taskData, sessionData] = await Promise.all([
     getStats(),
-    getTasks({ page: 1, page_size: 8 })
+    getTasks({ page: 1, page_size: 5 }),
+    getSessions({ has_report: 1, page: 1, page_size: 5 })
   ])
   stats.value = statsData
   tasks.value = taskData.items || []
+  reports.value = sessionData.items || []
 }, 5000)
 
 const onlineText = computed(() => {
@@ -81,4 +104,6 @@ const lastText = computed(() =>
 )
 
 const openTask = (row) => router.push(`/tasks/${row.task_id}`)
+const openReport = (row) =>
+  router.push(`/evidence/${encodeURIComponent(row.session_id)}`)
 </script>

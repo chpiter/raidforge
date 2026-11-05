@@ -10,7 +10,7 @@ from typing import Any, Dict, Optional
 from .client import AgentClient, Response
 from .clock import Clock, SystemClock, parse_rfc3339, rfc3339
 from .config import AgentConfig
-from .models import ALL_TASK_TYPES
+from .models import ADVERTISED_TASK_TYPES
 from .snapshot import HostSnapshot, SnapshotProvider
 from .state import StateStore
 from .version import AGENT_VERSION, PROTOCOL_VERSION
@@ -108,7 +108,7 @@ class HeartbeatLoop:
     def _capabilities(self, snapshot: Optional[HostSnapshot]) -> Dict[str, Any]:
         if snapshot is None:
             return {
-                "task_types": ALL_TASK_TYPES,
+                "task_types": ADVERTISED_TASK_TYPES,
                 "dry_run": True,
                 "evidence_kinds": [],
                 "controllers": [],

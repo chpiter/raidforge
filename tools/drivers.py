@@ -325,14 +325,19 @@ def resolve(args) -> int:
     warnings: List[str] = []
 
     def add_module(module: str, device: Optional[dict] = None) -> None:
+        meta = modules_meta.get(module, {})
+        allowed = meta.get("arches")
+        if allowed and arch not in allowed:
+            return
         record = modules.setdefault(
             module, {"module": module, "required": strict, "devices": []}
         )
+        if meta.get("load"):
+            record["load"] = True
         if device:
             key = device_key(device)
             if key and key not in record["devices"]:
                 record["devices"].append(key)
-        meta = modules_meta.get(module, {})
         # Without a probe the build must stay generic: only the profile decides
         # which firmware packages are installed.  With a probe we know which
         # families are present and can add exactly their packages.

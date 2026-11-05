@@ -3,10 +3,8 @@
     <PageHeader :title="controllerId" :subtitle="subtitle">
       <template #actions>
         <el-button @click="back">返回服务器</el-button>
-        <el-button link @click="$router.push(`/tasks?agent_id=${encodeURIComponent(agentId)}`)">任务</el-button>
         <el-button :loading="loading" @click="run">刷新页面</el-button>
         <el-button @click="refreshTopology(['list_pds', 'list_vds'])">刷新数据</el-button>
-        <el-button type="primary" @click="newTask">新建任务</el-button>
       </template>
     </PageHeader>
 
@@ -69,24 +67,12 @@
         <el-tabs v-model="activeTab">
           <el-tab-pane label="硬盘" name="disks">
             <div class="rf-toolbar" style="margin-bottom: 10px">
-              <el-button type="danger" :disabled="!selectedDisks.length" @click="openErase">
-                擦除选中 ({{ selectedDisks.length }})
-              </el-button>
               <el-button :disabled="!selectedDisks.length" @click="openCreateRaid(selectedDisks)">
                 用选中盘建 RAID
               </el-button>
               <div class="spacer" />
               <el-button @click="refreshTopology(['list_pds'])">刷新硬盘</el-button>
             </div>
-            <el-alert
-              v-if="selectedRaidMembers"
-              type="warning"
-              :closable="false"
-              show-icon
-              title="选中项包含 RAID 成员盘"
-              description="擦除时需要显式允许 allow_raid_member；agent 仍会二次校验。"
-              style="margin-bottom: 10px"
-            />
             <el-table
               ref="diskTable"
               :data="detail.pds"
@@ -147,13 +133,6 @@
       </div>
     </template>
 
-    <EraseDisksDialog
-      v-model="eraseVisible"
-      :agent-id="agentId"
-      :controller-id="controllerId"
-      :disks="eraseDisks"
-      @submitted="onSubmitted"
-    />
     <CreateRaidDialog
       v-model="createRaidVisible"
       :agent-id="agentId"
@@ -185,7 +164,6 @@ import { computed, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import PageHeader from '../components/PageHeader.vue'
-import EraseDisksDialog from '../components/dialogs/EraseDisksDialog.vue'
 import CreateRaidDialog from '../components/dialogs/CreateRaidDialog.vue'
 import DeleteVdDialog from '../components/dialogs/DeleteVdDialog.vue'
 import ClearConfigDialog from '../components/dialogs/ClearConfigDialog.vue'
@@ -203,8 +181,6 @@ const controllerId = computed(() => String(route.params.controllerId || ''))
 const detail = ref(null)
 const activeTab = ref('disks')
 const selectedDisks = ref([])
-const eraseDisks = ref([])
-const eraseVisible = ref(false)
 const createRaidVisible = ref(false)
 const createRaidPreselected = ref([])
 const deleteVisible = ref(false)
@@ -239,10 +215,6 @@ const hashPrefix = computed(() => {
   const value = detail.value?.topology_hash || ''
   return value ? value.slice(0, 12) : '-'
 })
-
-const selectedRaidMembers = computed(() =>
-  selectedDisks.value.some((disk) => Boolean(disk.raid_member_of))
-)
 
 const keyOf = (row) => row?.wwn || row?.serial || ''
 const selectable = (row) =>
@@ -312,12 +284,6 @@ const onSubmitted = (taskIds) => {
   openDrawer(taskIds, '执行任务')
 }
 
-const openErase = () => {
-  if (!selectedDisks.value.length) return
-  eraseDisks.value = [...selectedDisks.value]
-  eraseVisible.value = true
-}
-
 const openCreateRaid = (preselected) => {
   createRaidPreselected.value = [...(preselected || [])]
   createRaidVisible.value = true
@@ -329,6 +295,4 @@ const openDelete = (vd) => {
 }
 
 const back = () => router.push(`/servers/${encodeURIComponent(agentId.value)}`)
-const newTask = () =>
-  router.push({ path: '/tasks/new', query: { agent_id: agentId.value } })
 </script>

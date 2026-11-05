@@ -1,0 +1,23 @@
+==========================================
+    Hiraidadm   Information
+==========================================
+    Name: hiraidadm
+    Version :1.2.0.2
+    Build Time: Nov 15 2022 22:07:55
+==========================================
+==========================================
+    Status Code = 0
+    Status = Success
+    Description = None
+==========================================
+
+Enc                         | 0
+Slot                        | 0
+Intf                        | SAS
+Media Type                  | HDD
+Capacity                    | 1.200TB
+Model                       | ST1200MM0009
+Serial Number               | Z1ABC123
+Firmware Version            | 4.10
+RAID Group ID               | NA
+PreFail                     | No

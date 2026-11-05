@@ -87,8 +87,10 @@ def test_storcli_ladder_and_inventory(monkeypatch):
     assert [c.index for c in detection.controllers] == [0]
     assert detection.controllers[0].vendor is Vendor.LSI
     assert detection.controllers[0].model == "MegaRAID Tri-Mode SAS3108"
-    # Every rung is recorded for the evidence log.
-    assert [a.tool for a in detection.attempts][0] == "storcli"
+    # Every rung is recorded for the evidence log; hiraidadm is probed first
+    # and reports a missing binary on this host.
+    assert [a.tool for a in detection.attempts][0] == "hiraidadm"
+    assert any(a.tool == "storcli" and a.ok for a in detection.attempts)
 
     disks, raw = enum_mod.enumerate_disks(cfg, detection)
     assert len(disks) == 3

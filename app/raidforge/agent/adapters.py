@@ -7,9 +7,7 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Sequence
 
 from ..config import Config
-from ..core.commands import available_methods, build_command
 from ..core.models import (
-    CommandPlan,
     ControllerInfo,
     DiskInfo,
     Raid0Mode,
@@ -62,12 +60,10 @@ class ClearPlan:
 
 
 @dataclass
-class ErasePlan:
+class ClearPlan:
     controller: ControllerInfo
-    disks: List[DiskInfo]
-    plans: List[CommandPlan]
-    passes: int
-    eta_seconds: int
+    plans: List[RaidCommandPlan]
+    vd_count: int
     warnings: List[str] = field(default_factory=list)
 
     def previews(self) -> List[str]:
@@ -296,41 +292,6 @@ def build_clear(cfg: Config, snapshot: HostSnapshot, params: Dict[str, Any]) -> 
     return ClearPlan(controller=info, plans=plans, vd_count=len(vds), warnings=warnings)
 
 
-def build_erase(cfg: Config, snapshot: HostSnapshot, params: Dict[str, Any]) -> ErasePlan:
-    info, metadata, _caps = _controller(snapshot, params["controller_id"])
-    disks = select_disks(snapshot, params["controller_id"], params["pds"])
-    mode = params["mode"]
-    for disk in disks:
-        if mode not in available_methods(disk):
-            raise TaskRejected(
-                "unsupported_erase_mode",
-                f"{mode} 不适用于 {disk.disk_id} ({disk.medium.value})",
-                field="mode",
-            )
-    safety.check_erase_targets(snapshot, metadata, disks, bool(params["allow_raid_member"]))
-    plans: List[CommandPlan] = []
-    for disk in disks:
-        try:
-            plans.append(build_command(disk, mode, cfg))
-        except ValueError as exc:
-            raise TaskRejected("unsupported_erase_mode", str(exc), field="mode") from None
-    per_disk = 0
-    for disk in disks:
-        per_disk += 600 if disk.medium.value == "HDD" else 300
-    eta = per_disk * int(params["passes"])
-    warnings: List[str] = []
-    if params["passes"] > 1:
-        warnings.append(f"将重复执行 {params['passes']} 轮擦除命令")
-    return ErasePlan(
-        controller=info,
-        disks=disks,
-        plans=plans,
-        passes=int(params["passes"]),
-        eta_seconds=eta,
-        warnings=warnings,
-    )
-
-
 def build_read_result(snapshot: HostSnapshot, task: RemoteTask) -> Dict[str, Any]:
     params = task.params
     controllers = select_controllers(snapshot, params.get("controller_ids"))
@@ -415,29 +376,13 @@ def verify_clear(snapshot: HostSnapshot, controller_id: str, include_foreign: bo
     return ok, detail
 
 
-def verify_erase(snapshot: HostSnapshot, controller_id: str, plan: ErasePlan) -> tuple[bool, Dict[str, Any]]:
-    current = {disk.disk_id: disk for disk in (snapshot.scan.disks if snapshot.scan else [])}
-    missing: List[str] = []
-    changed: List[str] = []
-    for disk in plan.disks:
-        other = current.get(disk.disk_id)
-        if other is None:
-            missing.append(disk.disk_id)
-            continue
-        if str(other.serial) != str(disk.serial) or normalize_wwn(other.wwn) != normalize_wwn(disk.wwn):
-            changed.append(disk.disk_id)
-    return not missing and not changed, {"missing": missing, "changed": changed}
-
-
 __all__ = [
     "ClearPlan",
     "CreatePlan",
     "DeletePlan",
-    "ErasePlan",
     "build_clear",
     "build_create",
     "build_delete",
-    "build_erase",
     "build_read_result",
     "select_controllers",
     "select_disks",
@@ -445,5 +390,4 @@ __all__ = [
     "verify_clear",
     "verify_create",
     "verify_delete",
-    "verify_erase",
 ]

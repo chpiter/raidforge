@@ -36,7 +36,6 @@
         <el-switch
           v-else-if="field.type === 'boolean'"
           v-model="form[field.name]"
-          :disabled="field.name === 'verify' && meta.type === 'erase_disks'"
         />
 
         <el-select
@@ -240,7 +239,6 @@ function clean() {
       delete raw[key]
     }
   }
-  if (type === 'erase_disks') raw.verify = false
   return raw
 }
 

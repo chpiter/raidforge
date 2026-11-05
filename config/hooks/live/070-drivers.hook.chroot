@@ -32,9 +32,11 @@ fi
 echo "kernel: ${KVER}"
 
 # ---- prebuilt debs ---------------------------------------------------------
+NEED_INITRAMFS=0
 shopt -s nullglob
 debs=("${PAYLOAD}"/debs/*.deb)
 if [[ ${#debs[@]} -gt 0 ]]; then
+    NEED_INITRAMFS=1
     for deb in "${debs[@]}"; do
         debarch="$(dpkg-deb -f "$deb" Architecture 2>/dev/null || echo unknown)"
         if [[ "$debarch" != "$ARCH" && "$debarch" != "all" ]]; then
@@ -51,6 +53,7 @@ fi
 
 # ---- raw kernel modules ----------------------------------------------------
 if [[ -d "${PAYLOAD}/ko" ]]; then
+    NEED_INITRAMFS=1
     dest="/lib/modules/${KVER}/updates/raidforge"
     install -d "$dest"
     while IFS= read -r -d '' ko; do
@@ -61,6 +64,7 @@ fi
 
 # ---- raw firmware ----------------------------------------------------------
 if [[ -d "${PAYLOAD}/firmware" ]]; then
+    NEED_INITRAMFS=1
     install -d /lib/firmware
     cp -a "${PAYLOAD}/firmware/." /lib/firmware/
     echo "firmware tree copied into /lib/firmware"
@@ -68,6 +72,7 @@ fi
 
 # ---- dkms sources (optional, needs headers + compiler) --------------------
 if [[ -d "${PAYLOAD}/dkms" ]]; then
+    NEED_INITRAMFS=1
     for src in "${PAYLOAD}"/dkms/*/; do
         [[ -f "${src}dkms.conf" ]] || continue
         name="$(basename "$src")"
@@ -88,9 +93,22 @@ fi
 
 # ---- depmod + initramfs ---------------------------------------------------
 depmod -a "$KVER"
-if command -v update-initramfs >/dev/null 2>&1; then
-    update-initramfs -u -k "$KVER" >/dev/null 2>&1 || \
-        echo "!! update-initramfs failed (driver is still loadable after boot)" >&2
+if [[ "$NEED_INITRAMFS" == "1" ]]; then
+    if command -v update-initramfs >/dev/null 2>&1; then
+        # TCG builds make this very slow; only regenerate when an out-of-tree
+        # module/firmware was actually installed.
+        update-initramfs -u -k "$KVER" >/dev/null 2>&1 || \
+            echo "!! update-initramfs failed (driver is still loadable after boot)" >&2
+    fi
+else
+    echo "no out-of-tree driver payload - initramfs left unchanged"
+fi
+
+# The vendor tool is useless without its out-of-tree driver; say so loudly
+# instead of letting detection silently fall through to storcli/generic.
+if [[ -x /usr/local/bin/hiraidadm ]] && ! modinfo hiraid >/dev/null 2>&1; then
+    echo "!! hiraidadm is present but the hiraid module is missing - HiRAID cards will not be detected" >&2
+    echo "!! drop Huawei's driver .deb or DKMS source into vendor/drivers/<arch>/ and rebuild" >&2
 fi
 
 # ---- verify + record ------------------------------------------------------
@@ -156,6 +174,21 @@ installed = {
     "warnings": manifest.get("warnings", []),
     "unsupported": manifest.get("unsupported", []),
 }
+
+present_modules = {entry["module"] for entry in installed_modules if entry.get("present")}
+load_modules = [
+    entry.get("module")
+    for entry in manifest.get("modules", [])
+    if entry.get("load") and entry.get("module") in present_modules
+]
+if load_modules:
+    os.makedirs("/etc/modules-load.d", exist_ok=True)
+    with open("/etc/modules-load.d/raidforge-drivers.conf", "w", encoding="utf-8") as handle:
+        handle.write("# Modules required by RAIDFORGE vendor tools\n")
+        for module in sorted(set(load_modules)):
+            handle.write(f"{module}\n")
+    print(f"modules-load.d: {', '.join(sorted(set(load_modules)))}")
+
 with open("/etc/raidforge/drivers.installed.json", "w", encoding="utf-8") as handle:
     json.dump(installed, handle, indent=2, sort_keys=True)
     handle.write("\n")

@@ -76,7 +76,7 @@ class ToolConfig:
     enum_timeout: float = 30.0
     command_timeout: float = 60.0
     detection_order: List[str] = field(
-        default_factory=lambda: ["storcli", "perccli", "arcconf", "ssacli", "sg3_utils"]
+        default_factory=lambda: ["hiraidadm", "storcli", "perccli", "arcconf", "ssacli", "sg3_utils"]
     )
     forced_tool: Optional[str] = None
     enable_nvme: bool = True

@@ -19,12 +19,10 @@ TASK_TYPES = {
     "create_raid",
     "delete_raid",
     "clear_config",
-    "erase_disks",
     "abort_current",
 }
-DESTRUCTIVE_TYPES = {"create_raid", "delete_raid", "clear_config", "erase_disks"}
+DESTRUCTIVE_TYPES = {"create_raid", "delete_raid", "clear_config"}
 READ_TYPES = {"refresh_hardware", "list_controllers", "list_pds", "list_vds"}
-MODE_VALUES = {"thorough", "overwrite", "erase", "blockerase", "sanitize"}
 RAID_LEVELS = {
     "0": "RAID0",
     "raid0": "RAID0",
@@ -170,8 +168,6 @@ def validate_task_params(task_type: str, params: Any) -> Dict[str, Any]:
         return _delete_params(payload)
     if task_type == "clear_config":
         return _clear_params(payload)
-    if task_type == "erase_disks":
-        return _erase_params(payload)
     raise TaskValidationError("未知任务类型", code="unsupported_task_type", field="type")
 
 
@@ -287,44 +283,8 @@ def _clear_params(params: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def _erase_params(params: Dict[str, Any]) -> Dict[str, Any]:
-    allowed = {
-        "controller_id",
-        "mode",
-        "passes",
-        "verify",
-        "allow_raid_member",
-        "pds",
-        "dry_run",
-    }
-    _reject_extra(params, allowed)
-    controller_id = _require_str(params, "controller_id", maximum=128)
-    mode = _require_str(params, "mode", maximum=32).lower()
-    if mode not in MODE_VALUES:
-        raise TaskValidationError(
-            f"不支持的擦除模式 {mode!r}", code="unsupported_erase_mode", field="mode"
-        )
-    passes = _optional_int(params, "passes", 1, minimum=1, maximum=3)
-    verify = _optional_bool(params, "verify", True)
-    if verify:
-        raise TaskValidationError(
-            "core 不提供擦除完成校验（厂商命令异步返回），verify=true 未实现",
-            field="verify",
-        )
-    return {
-        "controller_id": controller_id,
-        "mode": mode,
-        "passes": passes,
-        "verify": False,
-        "allow_raid_member": _optional_bool(params, "allow_raid_member", False),
-        "pds": _selectors(params),
-        "dry_run": _optional_bool(params, "dry_run", False),
-    }
-
-
 __all__ = [
     "DESTRUCTIVE_TYPES",
-    "MODE_VALUES",
     "RAID_LEVELS",
     "READ_TYPES",
     "TASK_TYPES",

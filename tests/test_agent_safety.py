@@ -6,7 +6,7 @@ from pathlib import Path
 
 from raidforge.agent.bootmedia import probe
 from raidforge.agent.models import TaskRejected
-from raidforge.agent.safety import check_boot_media, check_erase_targets
+from raidforge.agent.safety import check_boot_media
 from raidforge.agent.topology import controller_identity
 from raidforge.core.models import DiskInfo, Medium, Vendor
 
@@ -117,19 +117,6 @@ def test_safety_blocks_boot_and_member_disks(tmp_path: Path):
     with pytest.raises(TaskRejected) as exc:
         check_boot_media(snapshot, [protected])
     assert exc.value.error_code == "boot_media_protected"
-
-    member = DiskInfo(
-        disk_id="c0e32s5",
-        controller_index=0,
-        vendor=Vendor.LSI,
-        serial="ZDISK",
-        wwn="0x5000c500a1b2c3d5",
-        size_bytes=100,
-    )
-    snapshot.pds = ({"disk_id": "c0e32s5", "raid_member_of": "v0", "removable": False, "mounted_at": []},)
-    with pytest.raises(TaskRejected) as exc:
-        check_erase_targets(snapshot, {"serial": "CTRL"}, [member], allow_raid_member=False)
-    assert exc.value.error_code == "disk_in_use"
 
 
 def test_controller_identity_without_serial_is_not_destructive():

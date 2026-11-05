@@ -2,11 +2,10 @@
   <div class="rf-page">
     <PageHeader :title="agent?.agent_id || '服务器详情'" :subtitle="agent ? `SN ${agent.server_sn || '-'}` : ''">
       <template #actions>
-        <el-button @click="$router.push('/servers')">返回服务器</el-button>
-        <el-button link @click="$router.push('/tasks')">任务</el-button>
+        <el-button @click="$router.push('/servers')">返回列表</el-button>
+        <el-button @click="openTasks">任务</el-button>
         <el-button :loading="loading" @click="run">刷新</el-button>
         <el-button :disabled="!agent" @click="refreshHardware">刷新硬件</el-button>
-        <el-button type="primary" :disabled="!agent" @click="newTask">新建任务</el-button>
       </template>
     </PageHeader>
 
@@ -35,9 +34,6 @@
           <el-descriptions-item label="来源 IP">{{ agent.last_seen_ip || '-' }}</el-descriptions-item>
           <el-descriptions-item label="队列">
             {{ agent.queue_depth }} / {{ agent.queue_max || '-' }}
-          </el-descriptions-item>
-          <el-descriptions-item label="最近错误" :span="3">
-            {{ agent.last_error || '-' }}
           </el-descriptions-item>
         </el-descriptions>
       </div>
@@ -174,8 +170,8 @@ const dataTime = (row) => {
   return value ? relativeTime(value) : '未采集'
 }
 
-const newTask = () =>
-  router.push({ path: '/tasks/new', query: { agent_id: agent.value?.agent_id || '' } })
+const openTasks = () =>
+  router.push({ path: '/tasks', query: { agent_id: agent.value?.agent_id || '' } })
 
 const openTask = (row) => router.push(`/tasks/${row.task_id}`)
 

@@ -20,6 +20,7 @@ from .adaptec import AdaptecProvider
 from .base import RaidProvider
 from .generic import GenericProvider
 from .hpe import HpeProvider
+from .huawei import HuaweiProvider
 from .lsi import LsiProvider
 
 __all__ = ["collect_raid", "provider_for"]
@@ -36,6 +37,8 @@ def provider_for(detection: DetectionResult) -> RaidProvider:
         return AdaptecProvider(binary or "arcconf")
     if tool == "ssacli":
         return HpeProvider(binary or "ssacli")
+    if tool == "hiraidadm":
+        return HuaweiProvider(binary or "hiraidadm")
     return GenericProvider(binary or "sg_scan")
 
 

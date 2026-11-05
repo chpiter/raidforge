@@ -46,9 +46,17 @@
             <span v-else class="rf-muted">-</span>
           </template>
         </el-table-column>
-        <el-table-column label="" width="80" align="right">
+        <el-table-column label="" width="130" align="right">
           <template #default="{ row }">
             <el-button link type="primary" @click.stop="openServer(row)">进入</el-button>
+            <el-button
+              v-if="row.status === 'offline'"
+              link
+              type="danger"
+              @click.stop="remove(row)"
+            >
+              删除
+            </el-button>
           </template>
         </el-table-column>
       </el-table>
@@ -71,9 +79,10 @@
 <script setup>
 import { ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import PageHeader from '../components/PageHeader.vue'
 import StatusTag from '../components/StatusTag.vue'
-import { getAgents } from '../api'
+import { deleteAgent, getAgents } from '../api'
 import { relativeTime, usePolling } from '../composables/usePolling'
 
 const router = useRouter()
@@ -106,4 +115,24 @@ const onSizeChange = () => {
 }
 
 const openServer = (row) => router.push(`/servers/${encodeURIComponent(row.agent_id)}`)
+
+const remove = async (row) => {
+  try {
+    await ElMessageBox.confirm(
+      `删除服务器 ${row.agent_id}（SN ${row.server_sn || '-'}）？删除后将从列表隐藏，历史任务与报告仍保留；该服务器重新上线后会自动恢复。`,
+      '删除服务器',
+      { type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消' }
+    )
+  } catch {
+    return
+  }
+  try {
+    await deleteAgent(row.agent_id)
+    ElMessage.success('已删除')
+    if (servers.value.length === 1 && page.value > 1) page.value -= 1
+    run()
+  } catch (exc) {
+    ElMessage.error(exc.message || '删除失败')
+  }
+}
 </script>

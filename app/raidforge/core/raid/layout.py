@@ -63,6 +63,10 @@ def disk_address(disk: DiskInfo, vendor: Optional[Vendor] = None) -> Optional[st
         if disk.enclosure is not None and disk.slot is not None:
             return f"{disk.enclosure}:{disk.slot}"
         return None
+    if vendor is Vendor.HUAWEI:
+        if disk.enclosure is not None and disk.slot is not None:
+            return f"{disk.enclosure}:{disk.slot}"
+        return None
     if vendor is Vendor.PMC:
         if disk.channel is not None and disk.device_number is not None:
             return f"{disk.channel}:{disk.device_number}"

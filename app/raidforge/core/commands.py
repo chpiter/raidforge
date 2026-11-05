@@ -72,6 +72,15 @@ METHOD_TABLE: Dict[Tuple[str, str], List[str]] = {
     # VERIFY: crypto erase only works on SED/self-encrypting drives; on a plain
     # SSD the operator must pick blockerase instead.
     ("hpe", "sanitize"): ["ssacli", "ctrl", "slot={c}", "pd", "{ref}", "modify", "erase", "erasepattern=crypto", "forced"],
+    # ---------------- Huawei HiRAID ----------------
+    # `mode=simple|normal|thorough` maps onto the LSI-style erase strengths;
+    # sanitize only applies to physical drives (SED for cryptoerase).
+    ("huawei", "thorough"): ["hiraidadm", "c{c}:e{e}:s{s}", "start", "erase", "mode=thorough"],
+    ("huawei", "overwrite"): ["hiraidadm", "c{c}:e{e}:s{s}", "start", "erase", "mode=simple"],
+    ("huawei", "erase"): ["hiraidadm", "c{c}:e{e}:s{s}", "start", "erase", "mode=normal"],
+    ("huawei", "blockerase"): ["hiraidadm", "c{c}:e{e}:s{s}", "start", "sanitize", "mode=blockerase"],
+    # VERIFY: cryptoerase requires a SED; plain SSDs must use blockerase.
+    ("huawei", "sanitize"): ["hiraidadm", "c{c}:e{e}:s{s}", "start", "sanitize", "mode=cryptoerase"],
 }
 
 # Generic path is keyed by transport protocol because the tool set differs.

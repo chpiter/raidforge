@@ -104,3 +104,42 @@ def test_detection_order_alias(monkeypatch):
     detection = detect_mod.detect_controllers(cfg)
     assert detection.tool == "storcli"
     assert detection.binary == "storcli64"
+
+
+HIRA_TABLE = {
+    "hiraidadm show allctrl": (FIXTURES / "hiraidadm" / "show_allctrl.txt").read_text(encoding="utf-8"),
+    "hiraidadm c0 show": (FIXTURES / "hiraidadm" / "c0_show.txt").read_text(encoding="utf-8"),
+}
+
+
+def test_hiraidadm_wins_over_storcli(monkeypatch):
+    cfg = default_config()
+    install(monkeypatch, {**HIRA_TABLE, **STOR_CLI_TABLE}, {"hiraidadm", "storcli"})
+    detection = detect_mod.detect_controllers(cfg)
+    assert detection.tool == "hiraidadm"
+    assert detection.binary == "hiraidadm"
+    assert detection.provider == "huawei"
+    assert detection.controllers[0].vendor is Vendor.HUAWEI
+    assert detection.controllers[0].serial == "2102312XYZ"
+    assert detection.controllers[0].model == "SP686C-M-16i"
+
+
+def test_hiraidadm_without_controllers_falls_through_to_storcli(monkeypatch):
+    cfg = default_config()
+    table = {
+        "hiraidadm show allctrl": "Controllers Number = 0\n",
+        **STOR_CLI_TABLE,
+    }
+    install(monkeypatch, table, {"hiraidadm", "storcli"})
+    detection = detect_mod.detect_controllers(cfg)
+    assert detection.tool == "storcli"
+    assert detection.binary == "storcli"
+
+
+def test_forced_hiraid_alias(monkeypatch):
+    cfg = default_config()
+    cfg.tools.forced_tool = "hiraid"
+    install(monkeypatch, {**HIRA_TABLE, **STOR_CLI_TABLE}, {"hiraidadm", "storcli"})
+    detection = detect_mod.detect_controllers(cfg)
+    assert detection.tool == "hiraidadm"
+    assert detection.binary == "hiraidadm"

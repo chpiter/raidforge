@@ -77,36 +77,6 @@ def _pd_payload(snapshot: HostSnapshot, disk: DiskInfo) -> Dict[str, Any]:
     return {}
 
 
-def check_erase_targets(
-    snapshot: HostSnapshot,
-    controller: Dict[str, Any],
-    disks: Sequence[DiskInfo],
-    allow_raid_member: bool,
-) -> None:
-    check_controller(controller)
-    for disk in disks:
-        payload = _pd_payload(snapshot, disk)
-        if payload.get("removable"):
-            raise TaskRejected("disk_removable", f"目标盘 {disk.disk_id} 是可移动盘")
-    check_boot_media(snapshot, disks)
-    for disk in disks:
-        payload = _pd_payload(snapshot, disk)
-        if payload.get("raid_member_of") and not allow_raid_member:
-            raise TaskRejected(
-                "disk_in_use",
-                f"目标盘 {disk.disk_id} 是 RAID 成员，需先删除卷",
-                detail={"disk": disk.disk_id, "volume": payload.get("raid_member_of")},
-            )
-        if payload.get("removable"):
-            raise TaskRejected("disk_removable", f"目标盘 {disk.disk_id} 是可移动盘")
-        if payload.get("mounted_at"):
-            raise TaskRejected(
-                "boot_media_protected",
-                f"目标盘 {disk.disk_id} 存在挂载点",
-                detail={"mountpoints": payload.get("mounted_at")},
-            )
-
-
 def _blocked_code(reason: str) -> str:
     text = (reason or "").lower()
     if "boot" in text or "live" in text:
@@ -245,7 +215,6 @@ __all__ = [
     "check_controller",
     "check_controller_idle",
     "check_create_targets",
-    "check_erase_targets",
     "check_lease",
     "check_pd_removable",
     "check_topology",

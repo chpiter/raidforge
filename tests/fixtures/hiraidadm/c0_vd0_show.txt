@@ -1,0 +1,22 @@
+==========================================
+    Hiraidadm   Information
+==========================================
+    Name: hiraidadm
+    Version :1.2.0.2
+    Build Time: Nov 15 2022 22:07:55
+==========================================
+==========================================
+    Status Code = 0
+    Status = Success
+    Description = None
+==========================================
+
+ID                          | 0
+Name                        | vd0
+RAID ID                     | 0
+RAID Level                  | 1
+Status                      | normal
+VD Type                     | normal
+Capacity                    | 1.454TB
+Strip Size                  | 128KB
+Sector Size                 | 512B

@@ -3,8 +3,9 @@ Drop the vendor RAID CLIs here before running ./build.sh
 
 Preferred layout (per architecture):
 
-    vendor/cli/amd64/   storcli, perccli, arcconf, ssacli, hpssacli
-    vendor/cli/arm64/   storcli, arcconf   (ssacli/perccli have no arm64 build)
+    vendor/cli/amd64/   storcli64, perccli, arcconf, ssacli, hpssacli
+    vendor/cli/arm64/   storcli64, arcconf, hiraidadm
+                        (ssacli/perccli have no arm64 build)
 
 build.sh copies only the directory matching the target architecture into
 config/includes.chroot/usr/local/bin/ at staging time.  Dropping binaries
@@ -19,6 +20,7 @@ repository.  Put the decompressed ELF binaries straight into the directory
     perccli / perccli64     Dell PERC (same CLI grammar as storcli)
     arcconf                 Microchip / Adaptec SmartRAID
     ssacli / hpssacli       HPE Smart Array
+    hiraidadm               Huawei HiRAID (aarch64 only; needs the hiraid driver)
 
 Where they come from:
 

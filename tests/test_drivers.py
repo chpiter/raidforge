@@ -226,3 +226,27 @@ def test_verify_accepts_present_module(tmp_path: Path) -> None:
     )
     args = Namespace(arch="amd64", chroot=str(chroot), iso="")
     assert drivers.verify(args) == 0
+
+
+def test_hiraid_module_is_arm64_only(resolver_env: Path) -> None:
+    arm = Namespace(
+        arch="arm64", probe="", profile="minimal", chroot="", allow_unknown=False, dry_run=False
+    )
+    assert drivers.resolve(arm) == 0
+    manifest = json.loads(
+        (resolver_env / "config" / "includes.chroot" / "usr" / "src" / "raidforge-drivers"
+         / "arm64" / "manifest.json").read_text(encoding="utf-8")
+    )
+    modules = {item["module"]: item for item in manifest["modules"]}
+    assert "hiraid" in modules
+    assert modules["hiraid"]["load"] is True
+
+    amd = Namespace(
+        arch="amd64", probe="", profile="minimal", chroot="", allow_unknown=False, dry_run=False
+    )
+    assert drivers.resolve(amd) == 0
+    manifest = json.loads(
+        (resolver_env / "config" / "includes.chroot" / "usr" / "src" / "raidforge-drivers"
+         / "amd64" / "manifest.json").read_text(encoding="utf-8")
+    )
+    assert "hiraid" not in {item["module"] for item in manifest["modules"]}

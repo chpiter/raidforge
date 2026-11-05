@@ -1,0 +1,22 @@
+==========================================
+    Hiraidadm   Information
+==========================================
+    Name: hiraidadm
+    Version :1.2.0.2
+    Build Time: Nov 15 2022 22:07:55
+==========================================
+==========================================
+    Status Code = 0
+    Status = Success
+    Description = None
+==========================================
+
+Controllers Number = 1
+-------------------------------------------------------
+Controller Id           | 0
+Device Name             | /dev/bsg/hiraid0
+Pcie Bus Domain         | 0000
+Bus Number              | 85
+Device Number           | 00
+Function Number         | 00
+PCI Address             | 0000:85:00.0

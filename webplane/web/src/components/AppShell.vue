@@ -21,6 +21,10 @@
           <el-icon><List /></el-icon>
           <span>任务</span>
         </el-menu-item>
+        <el-menu-item index="/evidence">
+          <el-icon><FolderOpened /></el-icon>
+          <span>证据与报告</span>
+        </el-menu-item>
       </el-menu>
       <div class="aside-foot">
         <el-tag size="small" type="warning" effect="plain">无认证</el-tag>
@@ -50,6 +54,7 @@ const router = useRouter()
 const active = computed(() => {
   if (route.path.startsWith('/servers') || route.path.startsWith('/agents')) return '/servers'
   if (route.path.startsWith('/tasks')) return '/tasks'
+  if (route.path.startsWith('/evidence')) return '/evidence'
   return '/'
 })
 
