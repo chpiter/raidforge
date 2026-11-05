@@ -1,0 +1,127 @@
+#!/usr/bin/env python3
+"""Print the driver-relevant hardware state of the running appliance.
+
+This is the on-site counterpart of `tools/drivers.py`: it shows which
+controller/NIC the kernel bound to which module, which firmware files failed to
+load, and what the image was built with (/etc/raidforge/drivers.installed.json).
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import subprocess
+from typing import Dict, List, Optional
+
+INSTALLED = "/etc/raidforge/drivers.installed.json"
+
+LOCAL_SECTIONS = (
+    ("Controller / storage", ("0104", "0107", "0106", "0108")),
+    ("Network", ("0200", "0280")),
+)
+
+
+def run(argv: List[str]) -> str:
+    try:
+        done = subprocess.run(
+            argv, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, timeout=20
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return ""
+    return done.stdout or ""
+
+
+def sysfs(slot: str, name: str) -> str:
+    path = os.path.join("/sys/bus/pci/devices", slot, name)
+    try:
+        return os.path.basename(os.path.realpath(path))
+    except OSError:
+        return ""
+
+
+def read_dmi(name: str) -> str:
+    try:
+        with open(f"/sys/class/dmi/id/{name}", encoding="utf-8", errors="replace") as handle:
+            return handle.read().strip()
+    except OSError:
+        return ""
+
+
+def lspci() -> List[str]:
+    return [line for line in run(["lspci", "-Dnn"]).splitlines() if line.strip()]
+
+
+def firmware_errors() -> List[str]:
+    text = run(["dmesg"]) or run(["journalctl", "-k", "-n", "2000", "--no-pager"])
+    return [
+        line.strip()
+        for line in text.splitlines()
+        if "firmware" in line.lower() and ("fail" in line.lower() or "missing" in line.lower())
+    ]
+
+
+def installed_manifest() -> Optional[Dict]:
+    try:
+        with open(INSTALLED, encoding="utf-8") as handle:
+            return json.load(handle)
+    except (OSError, ValueError):
+        return None
+
+
+def main() -> int:
+    print("RaidForge hardware inventory")
+    print("=" * 60)
+    print(f"system : {read_dmi('sys_vendor')} {read_dmi('product_name')} ({read_dmi('board_name')})")
+    print(f"bios   : {read_dmi('bios_version')}")
+    print(f"kernel : {os.uname().release} ({os.uname().machine})")
+    print()
+
+    lines = lspci()
+    for title, classes in LOCAL_SECTIONS:
+        print(f"{title}:")
+        shown = 0
+        for line in lines:
+            slot = line.split()[0]
+            klass = line.split()[1].strip("[]")[:4] if "[" in line else ""
+            if klass not in classes:
+                continue
+            driver = sysfs(slot, "driver") or "-"
+            module = sysfs(slot, "module") or "-"
+            print(f"  {line}")
+            print(f"      driver={driver} module={module}")
+            shown += 1
+        if not shown:
+            print("  (none)")
+        print()
+
+    print("Firmware load failures:")
+    errors = firmware_errors()
+    if errors:
+        for line in errors[:20]:
+            print(f"  {line}")
+    else:
+        print("  (none)")
+
+    manifest = installed_manifest()
+    print()
+    print("Image driver manifest:")
+    if not manifest:
+        print(f"  {INSTALLED} not present (image built without driver staging)")
+    else:
+        print(f"  arch={manifest.get('arch')} profile={manifest.get('profile')} catalog={manifest.get('catalog_version')}")
+        modules = manifest.get("modules", [])
+        print(f"  modules: {', '.join(sorted(m.get('module', '?') for m in modules)) or '(none)'}")
+        packages = manifest.get("packages", [])
+        print(f"  packages: {', '.join(packages) if packages else '(none)'}")
+        for warning in manifest.get("warnings", []):
+            print(f"  warning: {warning}")
+        unsupported = manifest.get("unsupported", [])
+        if unsupported:
+            print("  unsupported devices:")
+            for item in unsupported:
+                print(f"    {item}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -1,0 +1,202 @@
+#!/usr/bin/env python3
+"""Collect the hardware inventory the build-time driver resolver needs.
+
+Run this on a target server (or straight from the RAIDFORGE live ISO, which is
+the reliable path because the image guarantees lspci/python3/ethtool):
+
+    raidforge-probe -o /media/usb/hw.json
+
+Then feed the file to `tools/drivers.py resolve --probe hw.json`.  The output
+is plain JSON so it can be archived next to the evidence and diffed later.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import platform
+import re
+import shlex
+import socket
+import subprocess
+import sys
+from typing import Dict, List, Optional
+
+DMI_FILES = {
+    "vendor": "/sys/class/dmi/id/sys_vendor",
+    "product": "/sys/class/dmi/id/product_name",
+    "version": "/sys/class/dmi/id/product_version",
+    "board": "/sys/class/dmi/id/board_name",
+    "bios": "/sys/class/dmi/id/bios_version",
+}
+
+FIRMWARE_PATTERNS = (
+    re.compile(r"Direct firmware load for (\S+) failed"),
+    re.compile(r"firmware: failed to load (\S+)"),
+    re.compile(r"Failed to load firmware(?: file)? (\S+)"),
+)
+
+
+def run(argv: List[str], timeout: int = 20) -> Optional[str]:
+    try:
+        done = subprocess.run(
+            argv,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            timeout=timeout,
+            text=True,
+            errors="replace",
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if done.returncode != 0:
+        return None
+    return done.stdout
+
+
+def read_file(path: str) -> str:
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as handle:
+            return handle.read().strip()
+    except OSError:
+        return ""
+
+
+def normalize_arch(machine: str) -> str:
+    machine = (machine or "").lower()
+    if machine in ("x86_64", "amd64"):
+        return "amd64"
+    if machine in ("aarch64", "arm64"):
+        return "arm64"
+    return machine
+
+
+def system_info() -> Dict[str, str]:
+    info = {key: read_file(path) for key, path in DMI_FILES.items()}
+    info["hostname"] = socket.gethostname()
+    info["arch"] = normalize_arch(platform.machine())
+    info["kernel"] = platform.release()
+    return info
+
+
+def parse_lspci(text: str) -> List[Dict[str, str]]:
+    devices: List[Dict[str, str]] = []
+    for line in text.splitlines():
+        try:
+            fields = shlex.split(line)
+        except ValueError:
+            continue
+        if len(fields) < 6:
+            continue
+        slot, klass, vendor, device = fields[0], fields[1], fields[2], fields[3]
+        devices.append(
+            {
+                "slot": slot,
+                "class": klass.lower(),
+                "vendor": vendor.lower(),
+                "device": device.lower(),
+                "vendor_name": fields[4],
+                "name": fields[5],
+            }
+        )
+    return devices
+
+
+def driver_for(slot: str) -> Dict[str, str]:
+    base = f"/sys/bus/pci/devices/{slot}"
+    result = {"driver": "", "module": ""}
+    for key, link in (("driver", "driver"), ("module", "module")):
+        target = os.path.realpath(os.path.join(base, link)) if os.path.exists(
+            os.path.join(base, link)
+        ) else ""
+        if target:
+            result[key] = os.path.basename(target.rstrip("/"))
+    return result
+
+
+def pci_devices() -> List[Dict[str, str]]:
+    raw = run(["lspci", "-Dmm", "-n"])
+    if raw is None:
+        return []
+    devices = parse_lspci(raw)
+    for device in devices:
+        device.update(driver_for(device["slot"]))
+    return devices
+
+
+def nics() -> List[Dict[str, str]]:
+    result: List[Dict[str, str]] = []
+    root = "/sys/class/net"
+    if not os.path.isdir(root):
+        return result
+    for iface in sorted(os.listdir(root)):
+        if iface == "lo":
+            continue
+        device_link = os.path.join(root, iface, "device")
+        if not os.path.exists(device_link):
+            continue
+        slot = os.path.basename(os.path.realpath(device_link))
+        driver = driver_for(slot)
+        ethtool = run(["ethtool", "-i", iface]) or ""
+        info = {"iface": iface, "slot": slot}
+        info.update(driver)
+        for line in ethtool.splitlines():
+            if ":" in line:
+                key, value = line.split(":", 1)
+                info[key.strip().replace(" ", "_").lower()] = value.strip()
+        info["mac"] = read_file(os.path.join(root, iface, "address"))
+        info["operstate"] = read_file(os.path.join(root, iface, "operstate"))
+        result.append(info)
+    return result
+
+
+def firmware_missing() -> List[str]:
+    text = run(["dmesg"]) or ""
+    if not text:
+        text = run(["journalctl", "-k", "-n", "4000", "--no-pager"]) or ""
+    found: List[str] = []
+    for line in text.splitlines():
+        for pattern in FIRMWARE_PATTERNS:
+            match = pattern.search(line)
+            if match:
+                path = match.group(1).strip("'\"")
+                if path.startswith("/lib/firmware/"):
+                    path = path[len("/lib/firmware/") :]
+                if path not in found:
+                    found.append(path)
+    return sorted(found)
+
+
+def main(argv: Optional[List[str]] = None) -> int:
+    parser = argparse.ArgumentParser(
+        description="collect a RAIDFORGE hardware/driver inventory as JSON"
+    )
+    parser.add_argument("-o", "--output", default="-", help="output file (default: stdout)")
+    parser.add_argument("--no-dmesg", action="store_true", help="skip firmware error scan")
+    args = parser.parse_args(argv)
+
+    report = {
+        "schema": 1,
+        "system": system_info(),
+        "pci": pci_devices(),
+        "nics": nics(),
+        "firmware_missing": [] if args.no_dmesg else firmware_missing(),
+        "tools": {
+            "lspci": run(["lspci", "--version"]) is not None,
+            "ethtool": run(["ethtool", "--version"]) is not None,
+        },
+    }
+
+    payload = json.dumps(report, indent=2, sort_keys=True, ensure_ascii=False) + "\n"
+    if args.output == "-":
+        sys.stdout.write(payload)
+    else:
+        with open(args.output, "w", encoding="utf-8") as handle:
+            handle.write(payload)
+        print(f"wrote {args.output}", file=sys.stderr)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

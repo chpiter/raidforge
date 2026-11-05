@@ -1,0 +1,39 @@
+{
+  "schema": 1,
+  "system": {
+    "hostname": "kunpeng-lab-01",
+    "arch": "arm64",
+    "kernel": "6.1.0-28-arm64",
+    "vendor": "Huawei",
+    "product": "TaiShan 200 (Model 2280)",
+    "board": "BC82AMDD",
+    "bios": "1.83"
+  },
+  "pci": [
+    {
+      "slot": "0000:74:00.0",
+      "class": "0104",
+      "vendor": "1000",
+      "device": "005d",
+      "vendor_name": "Broadcom / LSI",
+      "name": "MegaRAID SAS-3 3108 [Invader]",
+      "driver": "megaraid_sas",
+      "module": "megaraid_sas"
+    },
+    {
+      "slot": "0000:3a:00.0",
+      "class": "0200",
+      "vendor": "19e5",
+      "device": "a221",
+      "vendor_name": "Huawei Technologies Co., Ltd.",
+      "name": "HNS GE/10GE/25GE Network Controller",
+      "driver": "hns3",
+      "module": "hns3"
+    }
+  ],
+  "nics": [
+    {"iface": "enp58s0", "slot": "0000:3a:00.0", "driver": "hns3", "module": "hns3"}
+  ],
+  "firmware_missing": [],
+  "tools": {"lspci": true, "ethtool": true}
+}

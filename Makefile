@@ -52,6 +52,41 @@ sync-watch:       ## keep pushing on every change (Ctrl+C to stop)
 remote-build: sync ## sync, then build the ISO on the build host
 	./tools/sync.sh --run "./build.sh"
 
+# ---------------- arm64 (emulated VM on the build host) ----------------
+vm-host-prep: ## install qemu arm64 / EFI / cloud-init tooling on the build host
+	./tools/sync.sh --run "bash /root/raidforge/tools/arm64_vm.sh host-prep"
+
+vm-init: ## one-time: create the Debian 12 arm64 build VM (on 192.168.40.132)
+	./tools/sync.sh --run "bash /root/raidforge/tools/arm64_vm.sh init"
+
+vm-start: ## start the arm64 build VM
+	./tools/sync.sh --run "bash /root/raidforge/tools/arm64_vm.sh start"
+
+vm-stop: ## stop the arm64 build VM
+	./tools/sync.sh --run "bash /root/raidforge/tools/arm64_vm.sh stop"
+
+vm-status: ## show arm64 VM status
+	./tools/sync.sh --run "bash /root/raidforge/tools/arm64_vm.sh status"
+
+sync-arm64: ## push the tree + wheels + drivers into the arm64 VM share
+	./tools/sync.sh --arch arm64 --with-wheels --with-drivers
+
+remote-build-arm64: sync-arm64 ## build the arm64 ISO inside the VM
+	./tools/sync.sh --arch arm64 --run "./build.sh"
+
+iso-update-arm64: ## classify changes and rebuild the arm64 ISO
+	./tools/iso_update.sh --arch arm64
+
+# ---------------- drivers ----------------
+drivers: ## resolve drivers/firmware from the catalog (no probe report)
+	python3 tools/drivers.py resolve --arch amd64
+
+drivers-probe: ## resolve from a probe report: make drivers-probe PROBE=hw.json [PROFILE=full]
+	python3 tools/drivers.py resolve --arch amd64 --probe "$(PROBE)" --profile "$(or $(PROFILE),minimal)"
+
+drivers-verify: ## verify the built chroot against the driver manifest
+	python3 tools/drivers.py verify --arch amd64 --chroot chroot
+
 remote-sh:        ## open a shell command on the build host, e.g. make remote-sh CMD=uptime
 	./tools/sync.sh --run "$(CMD)"
 
@@ -81,4 +116,7 @@ help:
 
 .PHONY: build build-no-vendor vendor preflight clean clean-all plan run test check pytest compile \
         webplane webplane-test webplane-web webplane-deploy help \
-        sync sync-all sync-watch remote-build remote-sh iso-adopt iso-update iso-update-test
+        sync sync-all sync-watch remote-build remote-sh iso-adopt iso-update iso-update-test \
+        vm-init vm-start vm-stop vm-status sync-arm64 remote-build-arm64 iso-update-arm64 \
+        vm-host-prep \
+        drivers drivers-probe drivers-verify

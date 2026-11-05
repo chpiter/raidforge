@@ -1,0 +1,21 @@
+{
+  "schema": 1,
+  "version": "2026-11-04",
+  "note": "Maps firmware paths reported by dmesg ('Direct firmware load for ... failed') to Debian packages. First matching rule wins; rules are matched by prefix and optionally glob.",
+  "default_package": null,
+  "rules": [
+    {"prefix": "intel/ice/ddp/", "package": "firmware-misc-nonfree"},
+    {"prefix": "intel/", "package": "firmware-misc-nonfree"},
+    {"prefix": "mellanox/", "package": "firmware-misc-nonfree"},
+    {"prefix": "netronome/", "package": "firmware-misc-nonfree"},
+    {"prefix": "liquidio/", "package": "firmware-misc-nonfree"},
+    {"prefix": "qed/", "package": "firmware-misc-nonfree"},
+    {"prefix": "qlogic/", "package": "firmware-qlogic"},
+    {"prefix": "ql2xxx/", "package": "firmware-qlogic"},
+    {"prefix": "bnx2x/", "package": "firmware-bnx2x"},
+    {"prefix": "bnx2/", "package": "firmware-bnx2"},
+    {"prefix": "cavium/", "package": "firmware-cavium"},
+    {"prefix": "netxen/", "package": "firmware-netxen"},
+    {"prefix": "myricom/", "package": "firmware-myricom"}
+  ]
+}

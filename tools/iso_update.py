@@ -10,6 +10,7 @@ affects the ISO build itself falls back to build.sh.
 from __future__ import annotations
 
 import argparse
+import base64
 import hashlib
 import io
 import json
@@ -23,9 +24,21 @@ from pathlib import Path
 from typing import Dict, Iterable, List, Optional
 
 ROOT = Path(__file__).resolve().parents[1]
-STATE_PATH = ROOT / ".tmp" / "iso-state.json"
 APP_DIR = ROOT / "app"
 ENV = {**os.environ, "MSYS_NO_PATHCONV": "1", "MSYS2_ARG_CONV_EXCL": "*"}
+
+# Set from --arch; amd64 keeps the historical state file name.
+ARCH = "amd64"
+
+
+def state_path() -> Path:
+    if ARCH == "amd64":
+        return ROOT / ".tmp" / "iso-state.json"
+    return ROOT / ".tmp" / f"iso-state-{ARCH}.json"
+
+
+def remote_dir() -> str:
+    return "/root/raidforge" if ARCH == "amd64" else f"/srv/raidforge-{ARCH}"
 
 NO_ISO_PREFIXES = (
     "webplane/",
@@ -177,12 +190,13 @@ def needs_webplane(changed: Iterable[str]) -> bool:
 
 
 def load_state() -> Optional[dict]:
-    if not STATE_PATH.is_file():
+    path = state_path()
+    if not path.is_file():
         return None
     try:
-        state = json.loads(STATE_PATH.read_text(encoding="utf-8"))
+        state = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError) as exc:
-        die(f"cannot read {STATE_PATH}: {exc}")
+        die(f"cannot read {path}: {exc}")
     state["manifest"] = {
         path: digest
         for path, digest in (state.get("manifest") or {}).items()
@@ -192,13 +206,45 @@ def load_state() -> Optional[dict]:
 
 
 def save_state(state: dict) -> None:
-    STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
-    STATE_PATH.write_text(json.dumps(state, indent=2, ensure_ascii=False), encoding="utf-8")
-    log(f"state saved: {STATE_PATH}")
+    path = state_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(state, indent=2, ensure_ascii=False), encoding="utf-8")
+    log(f"state saved: {path}")
+
+
+def catalog_fingerprint() -> str:
+    """Fingerprint the gitignored driver payloads, which the manifest cannot see."""
+    digest = hashlib.sha256()
+    candidates: List[Path] = [
+        ROOT / "vendor" / "drivers" / "catalog.json",
+        ROOT / "vendor" / "drivers" / "firmware-map.json",
+    ]
+    for base in (ROOT / "vendor" / "drivers" / ARCH, ROOT / "vendor" / "cli" / ARCH):
+        if base.is_dir():
+            candidates.extend(sorted(path for path in base.rglob("*") if path.is_file()))
+    for path in candidates:
+        if not path.is_file():
+            continue
+        digest.update(str(path.relative_to(ROOT)).encode("utf-8"))
+        digest.update(sha256_file(path).encode("ascii"))
+    return digest.hexdigest()
 
 
 def rssh(*args: str, check: bool = True) -> subprocess.CompletedProcess:
     return run([sys.executable, str(ROOT / "tools" / "rssh.py"), *args], check=check)
+
+
+def remote_exec(script: str, check: bool = True) -> subprocess.CompletedProcess:
+    """Run a shell script on the build host (amd64) or inside the arm64 VM."""
+    if ARCH == "amd64":
+        return rssh("exec", script, check=check)
+    encoded = base64.b64encode(script.encode("utf-8")).decode("ascii")
+    inner = f"echo {encoded} | base64 -d | bash"
+    return rssh(
+        "exec",
+        f"cd {remote_dir()} && ./tools/arm64_vm.sh run --no-sync \"{inner}\"",
+        check=check,
+    )
 
 
 def remote_iso_info(name: str = "", *, adopt: bool = False) -> dict:
@@ -225,7 +271,7 @@ def remote_iso_info(name: str = "", *, adopt: bool = False) -> dict:
             'echo "BUILD_ID=$ISO_HASH"',
         ]
     )
-    result = rssh("exec", script, check=False)
+    result = remote_exec(script, check=False)
     output = (result.stdout or "") + (result.stderr or "")
     if result.returncode != 0:
         print(output, file=sys.stderr)
@@ -248,6 +294,8 @@ def state_from_info(manifest: Dict[str, str], info: dict, *, mode: str = "") -> 
     name = info.get("ISO", "")
     return {
         "version": 1,
+        "arch": ARCH,
+        "fingerprint": catalog_fingerprint(),
         "updated_at": datetime.now().isoformat(timespec="seconds"),
         "git_head": run(["git", "rev-parse", "HEAD"]).stdout.strip(),
         "manifest": manifest,
@@ -263,7 +311,10 @@ def state_from_info(manifest: Dict[str, str], info: dict, *, mode: str = "") -> 
 
 
 def run_sync() -> None:
-    run(["bash", "tools/sync.sh"], capture=False)
+    args = ["bash", "tools/sync.sh"]
+    if ARCH != "amd64":
+        args += ["--arch", ARCH]
+    run(args, capture=False)
 
 
 def deploy_webplane() -> None:
@@ -285,7 +336,11 @@ def output_name(mode: str, override: str) -> str:
         if mode == "test" and name.endswith(".iso") and not name.endswith("-test.iso"):
             name = name[:-4] + "-test.iso"
         return name
-    suffix = "-test" if mode == "test" else ""
+    suffix = ""
+    if ARCH != "amd64":
+        suffix += f"-{ARCH}"
+    if mode == "test":
+        suffix += "-test"
     return f"raidforge-{app_version()}-{datetime.now().strftime('%Y%m%d')}{suffix}.iso"
 
 
@@ -301,6 +356,8 @@ def create_app_tar(path: Path) -> None:
 
 
 def patch_app(mode: str, name: str, changed: List[str]) -> dict:
+    if ARCH != "amd64":
+        die("app-only ISO patching is amd64-only; run a normal build for arm64")
     run_sync()
     tar_path = ROOT / ".tmp" / "iso-app.tar.gz"
     create_app_tar(tar_path)
@@ -345,8 +402,13 @@ def baseline(args) -> None:
     run_sync()
     fast = args.fast or args.mode == "test"
     build = "./build.sh" + (" --fast" if fast else "")
+    if getattr(args, "profile", ""):
+        build += f" --profile {args.profile}"
+    sync_args = ["bash", "tools/sync.sh"]
+    if ARCH != "amd64":
+        sync_args += ["--arch", ARCH]
     log(f"running normal build: {build}")
-    run(["bash", "tools/sync.sh", "--run", f"cd /root/raidforge && {build}"], capture=False)
+    run(sync_args + ["--run", f"cd /root/raidforge && {build}"], capture=False)
     info = remote_iso_info()
     save_state(state_from_info(current_manifest(), info))
     log("baseline build recorded")
@@ -366,8 +428,13 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser.add_argument("--full", action="store_true", help="force a normal build")
     parser.add_argument("--fast", action="store_true", help="normal build with --fast")
     parser.add_argument("--iso", default="", help="ISO file name (adopt/patch)")
+    parser.add_argument("--arch", choices=("amd64", "arm64"), default="amd64")
+    parser.add_argument("--profile", choices=("", "minimal", "full"), default="")
     parser.add_argument("--no-deploy-webplane", action="store_true")
     args = parser.parse_args(argv)
+
+    global ARCH
+    ARCH = args.arch
 
     if args.adopt and args.baseline:
         die("choose either --adopt or --baseline")
@@ -396,6 +463,9 @@ def main(argv: Optional[List[str]] = None) -> int:
     current = current_manifest()
     changed = changed_paths(state.get("manifest", {}), current)
     kind = kind or classify(changed)
+    if state.get("fingerprint") and state["fingerprint"] != catalog_fingerprint():
+        log("driver catalog / CLI / payload changed")
+        kind = "NORMAL"
     webplane = needs_webplane(changed)
     if args.app:
         if kind != "APP_ONLY" and not args.force:
@@ -427,6 +497,15 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     if kind == "NORMAL":
         log("changes affect the ISO build itself; falling back to build.sh")
+        baseline(args)
+        if webplane and not args.no_deploy_webplane:
+            deploy_webplane()
+        return 0
+
+    if ARCH != "amd64":
+        # Repacking a squashfs + replaying xorriso inside the emulated VM is
+        # fragile and barely faster than build.sh --fast; use the normal path.
+        log("arm64: app-only ISO patching is disabled; running a normal build")
         baseline(args)
         if webplane and not args.no_deploy_webplane:
             deploy_webplane()

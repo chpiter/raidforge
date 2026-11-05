@@ -1,0 +1,211 @@
+{
+  "schema": 1,
+  "version": "2026-11-04",
+  "kernel_baseline": {
+    "amd64": "6.1",
+    "arm64": "6.1"
+  },
+  "cli_arches": {
+    "storcli": ["amd64", "arm64"],
+    "storcli64": ["amd64", "arm64"],
+    "arcconf": ["amd64", "arm64"],
+    "ssacli": ["amd64"],
+    "hpssacli": ["amd64"],
+    "perccli": ["amd64"],
+    "perccli64": ["amd64"]
+  },
+  "profiles": {
+    "minimal": [],
+    "full": [
+      "firmware-qlogic",
+      "firmware-bnx2",
+      "firmware-bnx2x",
+      "firmware-netxen",
+      "firmware-myricom",
+      "firmware-cavium",
+      "firmware-brcm80211",
+      "firmware-iwlwifi"
+    ]
+  },
+  "modules": {
+    "megaraid_sas": {
+      "label": "LSI/Broadcom MegaRAID SAS (9341/9361/9460/9560)",
+      "packages": [],
+      "cli": "storcli",
+      "note": "Controller firmware lives on the card; storcli is required for RAID management."
+    },
+    "mpt3sas": {
+      "label": "LSI/Broadcom SAS3 HBA (9300/9400/9500 IT mode)",
+      "packages": [],
+      "cli": "storcli",
+      "note": "SAS HBA; disks are normally direct-attached and visible to sg3_utils."
+    },
+    "smartpqi": {
+      "label": "Microchip/Adaptec SmartRAID (SmartPQI)",
+      "packages": [],
+      "cli": "arcconf",
+      "note": "SmartRAID 3100/3200 series; arcconf manages the controller."
+    },
+    "aacraid": {
+      "label": "Adaptec RAID Series 6/7/8 (AACRAID)",
+      "packages": [],
+      "cli": "arcconf",
+      "note": "Legacy Adaptec controllers; arcconf manages the controller."
+    },
+    "hpsa": {
+      "label": "HPE Smart Array (P440/P840/Gen10)",
+      "packages": [],
+      "cli": "ssacli",
+      "note": "ssacli has no aarch64 build; HPE RAID management is amd64-only."
+    },
+    "hisi_sas_v3_hw": {
+      "label": "Huawei Kunpeng 920 on-board SAS",
+      "packages": [],
+      "cli": null,
+      "note": "On-board SAS controller of TaiShan/Kunpeng servers."
+    },
+    "ixgbe": {
+      "label": "Intel 82598/82599 10GbE",
+      "packages": [],
+      "cli": null
+    },
+    "i40e": {
+      "label": "Intel X710/XL710 10/40GbE",
+      "packages": [],
+      "cli": null
+    },
+    "ice": {
+      "label": "Intel E810 100GbE",
+      "packages": ["firmware-misc-nonfree"],
+      "cli": null,
+      "note": "The DDP package ships in firmware-misc-nonfree."
+    },
+    "mlx5_core": {
+      "label": "Mellanox ConnectX-4/5/6",
+      "packages": [],
+      "modules_extra": ["mlxfw"],
+      "cli": null,
+      "note": "Firmware is stored on the adapter flash."
+    },
+    "bnxt_en": {
+      "label": "Broadcom NetXtreme-E",
+      "packages": [],
+      "cli": null
+    },
+    "bnx2x": {
+      "label": "Broadcom NetXtreme II 10GbE",
+      "packages": ["firmware-bnx2x"],
+      "cli": null
+    },
+    "bnx2": {
+      "label": "Broadcom NetXtreme II 1GbE",
+      "packages": ["firmware-bnx2"],
+      "cli": null
+    },
+    "tg3": {
+      "label": "Broadcom NetXtreme 1GbE",
+      "packages": [],
+      "cli": null
+    },
+    "qla2xxx": {
+      "label": "QLogic Fibre Channel HBA",
+      "packages": ["firmware-qlogic"],
+      "cli": null
+    },
+    "hns3": {
+      "label": "Huawei Kunpeng on-board Ethernet",
+      "packages": [],
+      "cli": null
+    }
+  },
+  "devices": [
+    {
+      "id": "lsi-megaraid",
+      "name": "LSI/Broadcom MegaRAID (incl. 9361/9460/9560)",
+      "match": {"vendor": "1000", "class": "0104"},
+      "module": "megaraid_sas"
+    },
+    {
+      "id": "lsi-mpt3sas",
+      "name": "LSI/Broadcom SAS3 HBA",
+      "match": {"vendor": "1000", "class": "0107"},
+      "module": "mpt3sas"
+    },
+    {
+      "id": "adaptec-smartpqi",
+      "name": "Microchip/Adaptec SmartRAID",
+      "match": {
+        "vendor": "9005",
+        "class": "0104",
+        "pci_ids": ["9005:028f", "9005:028e"]
+      },
+      "module": "smartpqi"
+    },
+    {
+      "id": "adaptec-aacraid",
+      "name": "Adaptec RAID Series 6/7/8",
+      "match": {
+        "vendor": "9005",
+        "class": "0104",
+        "pci_ids": ["9005:0285", "9005:0286", "9005:028b", "9005:028c"]
+      },
+      "module": "aacraid"
+    },
+    {
+      "id": "hpe-smartarray",
+      "name": "HPE Smart Array P440/P840 (Gen9/Gen10)",
+      "match": {
+        "vendor": "103c",
+        "class": "0104",
+        "pci_ids": ["103c:3239", "103c:21c0", "103c:22be"]
+      },
+      "module": "hpsa"
+    },
+    {
+      "id": "intel-82599",
+      "name": "Intel 82599 10GbE",
+      "match": {
+        "vendor": "8086",
+        "class": "0200",
+        "pci_ids": ["8086:10fb", "8086:1528", "8086:151c"]
+      },
+      "module": "ixgbe"
+    },
+    {
+      "id": "intel-x710",
+      "name": "Intel X710/XL710",
+      "match": {
+        "vendor": "8086",
+        "class": "0200",
+        "pci_ids": ["8086:1572", "8086:1583", "8086:1584", "8086:1589"]
+      },
+      "module": "i40e"
+    },
+    {
+      "id": "intel-e810",
+      "name": "Intel E810",
+      "match": {
+        "vendor": "8086",
+        "class": "0200",
+        "pci_ids": ["8086:1592", "8086:1593", "8086:159b"]
+      },
+      "module": "ice"
+    },
+    {
+      "id": "mellanox-connectx",
+      "name": "Mellanox ConnectX-4/5/6",
+      "match": {
+        "vendor": "15b3",
+        "class": "0200",
+        "pci_ids": ["15b3:1013", "15b3:1015", "15b3:1017", "15b3:1019", "15b3:101b"]
+      },
+      "module": "mlx5_core"
+    },
+    {
+      "id": "huawei-hns3",
+      "name": "Huawei Kunpeng on-board Ethernet",
+      "match": {"vendor": "19e5", "class": "0200"},
+      "module": "hns3"
+    }
+  ]
+}

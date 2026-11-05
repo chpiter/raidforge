@@ -585,6 +585,8 @@ def _plan_payload(plan: Any) -> Dict[str, Any]:
             {
                 "raid_level": plan.layout.level.value,
                 "usable_bytes": plan.layout.capacity_bytes,
+                "stripe_kb": plan.layout.stripe_kb,
+                "init": plan.layout.init,
                 "member_serials": [disk.serial for disk in plan.layout.disks],
                 "warnings": list(plan.warnings),
             }
@@ -638,8 +640,11 @@ def _confirm_request(
     elif isinstance(plan, adapters.CreatePlan):
         for disk in plan.layout.disks:
             targets.append(f"{disk.serial} / {disk.wwn} / {disk.size_bytes} bytes ({disk.disk_id})")
+        stripe_label = f"{plan.layout.stripe_kb}K" if plan.layout.stripe_kb else "控制器默认"
+        init_label = "快速初始化 (fast)" if plan.layout.init == "fast" else "不显式指定 (none)"
         targets.append(
-            f"新建 {plan.layout.level.value} 名称={plan.layout.name} 可用容量={plan.layout.capacity_bytes}"
+            f"新建 {plan.layout.level.value} 名称={plan.layout.name} "
+            f"可用容量={plan.layout.capacity_bytes} 条带={stripe_label} 初始化={init_label}"
         )
     elif isinstance(plan, adapters.DeletePlan):
         targets.append(

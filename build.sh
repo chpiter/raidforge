@@ -6,6 +6,9 @@
 #   ./build.sh                 # full rebuild (clean chroot), ~6m45s
 #   ./build.sh --refresh       # reuse the chroot, re-run only the app stages (~4m)
 #   ./build.sh --fast          # --refresh + zstd squashfs + no boot countdown (~2m)
+#   ./build.sh --arch arm64    # build on an arm64 host/VM (no cross compilation)
+#   ./build.sh --probe hw.json # resolve drivers from a raidforge-probe report
+#   ./build.sh --profile full  # install the full server firmware set
 #   ./build.sh --no-vendor     # reuse what is already in vendor/wheels
 #   ./build.sh --vendor-only   # only download python wheels, then exit
 #   ./build.sh --preflight     # only run the environment checks
@@ -15,7 +18,7 @@
 #                              # 生成 /etc/raidforge/agent.yaml（不含 token）
 #   ./build.sh --poll-mode short --ca-bundle /etc/raidforge/ca.pem
 #
-# Output: raidforge-<version>-<date>.iso (+ .sha256)
+# Output: raidforge-<version>-<date>[-<arch>].iso (+ .sha256)
 #         --fast appends -test to the name, so a test image can never ship.
 #
 set -Eeuo pipefail
@@ -24,7 +27,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$ROOT_DIR"
 
 DISTRO="bookworm"
-ARCH="amd64"
+ARCH_RAW="${ARCH:-$(dpkg --print-architecture 2>/dev/null || uname -m)}"
 APP_VERSION="$(python3 - <<'PY' 2>/dev/null || echo 1.0.0
 import re, os
 init = os.path.join("app", "raidforge", "__init__.py")
@@ -35,11 +38,15 @@ STAMP="$(date +%Y%m%d)"
 
 STAGE_SRC="config/includes.chroot/usr/src/raidforge"
 STAGE_WHEELS="config/includes.chroot/usr/src/raidforge-vendor"
-VENDOR_DIR="vendor/wheels"
+STAGE_DRIVERS="config/includes.chroot/usr/src/raidforge-drivers"
 SQUASHFS="binary/live/filesystem.squashfs"
 
 DO_VENDOR=1
 DO_BUILD=1
+DO_DRIVERS=1
+PROFILE="minimal"
+PROBE_REPORT=""
+ALLOW_UNKNOWN_DRIVERS=0
 # Cache kept by default: dropping the bootstrap tarball + .deb cache makes every
 # rebuild re-download ~700 MB of packages. Use --full-clean for a pristine build.
 KEEP_CACHE=1
@@ -65,7 +72,7 @@ warn() { printf '\033[1;33m[warn]\033[0m  %s\n' "$*" >&2; }
 die()  { printf '\033[1;31m[fail]\033[0m  %s\n' "$*" >&2; exit 1; }
 
 usage() {
-    sed -n '5,20p' "$0" | sed 's/^# \{0,1\}//'
+    awk 'NR > 2 && /^#/ { sub(/^# ?/, ""); print; next } NR > 2 { exit }' "$0"
 }
 
 while [[ $# -gt 0 ]]; do
@@ -76,6 +83,11 @@ while [[ $# -gt 0 ]]; do
                        SQUASH_LEVEL="1"
                        ISO_SUFFIX="-test"
                        export RAIDFORGE_BOOT_TIMEOUT="${RAIDFORGE_BOOT_TIMEOUT:-1}" ;;
+        --arch)        [[ $# -ge 2 ]] || die "--arch needs a value"; ARCH_RAW="$2"; shift ;;
+        --probe)       [[ $# -ge 2 ]] || die "--probe needs a file"; PROBE_REPORT="$2"; shift ;;
+        --profile)     [[ $# -ge 2 ]] || die "--profile needs a value"; PROFILE="$2"; shift ;;
+        --allow-unknown-drivers) ALLOW_UNKNOWN_DRIVERS=1 ;;
+        --no-drivers)  DO_DRIVERS=0 ;;
         --no-vendor)   DO_VENDOR=0 ;;
         --vendor-only) VENDOR_ONLY=1; DO_BUILD=0 ;;
         --preflight)   PREFLIGHT_ONLY=1; DO_BUILD=0; DO_VENDOR=0 ;;
@@ -92,7 +104,22 @@ while [[ $# -gt 0 ]]; do
     shift
 done
 
-ISO_OUTPUT="raidforge-${APP_VERSION}-${STAMP}${ISO_SUFFIX}.iso"
+case "$ARCH_RAW" in
+    x86_64|amd64) ARCH="amd64" ;;
+    aarch64|arm64) ARCH="arm64" ;;
+    *) die "unsupported architecture: $ARCH_RAW" ;;
+esac
+export ARCH
+
+if [[ "$ARCH" == "amd64" && ! -d vendor/wheels/amd64 ]] && compgen -G "vendor/wheels/*.whl" >/dev/null; then
+    VENDOR_DIR="vendor/wheels"          # pre-arch layout, kept for amd64
+else
+    VENDOR_DIR="vendor/wheels/${ARCH}"
+fi
+
+ISO_ARCH_SUFFIX=""
+[[ "$ARCH" == "amd64" ]] || ISO_ARCH_SUFFIX="-${ARCH}"
+ISO_OUTPUT="raidforge-${APP_VERSION}-${STAMP}${ISO_ARCH_SUFFIX}${ISO_SUFFIX}.iso"
 
 # --------------------------------------------------------------------------
 # 1. preflight
@@ -100,7 +127,14 @@ ISO_OUTPUT="raidforge-${APP_VERSION}-${STAMP}${ISO_SUFFIX}.iso"
 preflight() {
     log "preflight: environment"
 
-    [[ "$(uname -m)" == "x86_64" ]] || warn "expected x86_64 host, got $(uname -m)"
+    local host_arch
+    host_arch="$(dpkg --print-architecture 2>/dev/null || uname -m)"
+    if [[ "$host_arch" != "$ARCH" ]]; then
+        die "cross builds are not supported (host ${host_arch}, target ${ARCH}); run this inside an ${ARCH} host/VM"
+    fi
+    if [[ "$ARCH" == "arm64" && -f /proc/cpuinfo ]] && grep -qi "QEMU" /proc/cpuinfo 2>/dev/null; then
+        log "running under QEMU emulation - expect the build to be much slower than native"
+    fi
 
     command -v lb >/dev/null 2>&1 || die "live-build not found; run: sudo apt install live-build debootstrap"
     local lbv
@@ -112,9 +146,22 @@ preflight() {
         log "not root - will retry via sudo if needed"
     fi
 
-    for pkg in debootstrap xorriso grub-pc-bin grub-efi-amd64-bin mtools syslinux-utils; do
+    local pkgs=(debootstrap xorriso mtools squashfs-tools)
+    if [[ "$ARCH" == "amd64" ]]; then
+        pkgs+=(grub-pc-bin grub-efi-amd64-bin syslinux-utils)
+    else
+        pkgs+=(grub-efi-arm64-bin)
+    fi
+    for pkg in "${pkgs[@]}"; do
         dpkg -s "$pkg" >/dev/null 2>&1 || warn "package '$pkg' is missing - the build may fail later"
     done
+
+    if [[ "$ARCH" != "amd64" ]]; then
+        command -v qemu-system-aarch64 >/dev/null 2>&1 \
+            || warn "qemu-system-aarch64 missing - the arm64 ISO smoke test will be skipped"
+        [[ -f /usr/share/qemu-efi-aarch64/QEMU_EFI.fd ]] \
+            || warn "qemu-efi-aarch64 missing - the arm64 ISO smoke test will be skipped"
+    fi
 
     # The squashfs type is a hard requirement of --fast; failing loudly beats
     # silently producing an xz image and wondering why the build is slow.
@@ -123,10 +170,40 @@ preflight() {
     fi
     command -v unsquashfs >/dev/null 2>&1 || warn "unsquashfs missing - the freshness canary will be skipped"
 
-    log "preflight: vendor tools in config/includes.chroot/usr/local/bin"
+    # A sync from a Windows checkout leaves x86 binaries in an arm64 tree.  They
+    # would be packed into the image and fail with "Exec format error": move them
+    # to the amd64 payload (recoverable) before the tool scan below.
+    if [[ "$ARCH" != "amd64" ]] && command -v file >/dev/null 2>&1; then
+        for tool in storcli storcli64 perccli perccli64 arcconf ssacli hpssacli; do
+            local bin="config/includes.chroot/usr/local/bin/${tool}"
+            [[ -f "$bin" ]] || continue
+            if file -b "$bin" 2>/dev/null | grep -qi "aarch64"; then
+                continue
+            fi
+            mkdir -p vendor/cli/amd64
+            if [[ -e "vendor/cli/amd64/${tool}" ]]; then
+                rm -f "$bin"
+            else
+                mv -f "$bin" "vendor/cli/amd64/${tool}"
+            fi
+            warn "moved x86 ${tool} out of the ${ARCH} image tree (vendor/cli/amd64/)"
+        done
+        for tool in storcli storcli64 perccli perccli64 arcconf ssacli hpssacli; do
+            local bin="vendor/cli/${ARCH}/${tool}"
+            [[ -f "$bin" ]] || continue
+            file -b "$bin" 2>/dev/null | grep -qi "aarch64" \
+                || die "${bin} is not an aarch64 binary"
+        done
+    fi
+
+    local cli_dir="vendor/cli/${ARCH}"
+    log "preflight: vendor tools for ${ARCH} (${cli_dir} or staged config/includes.chroot/usr/local/bin)"
     local found=0
     for tool in storcli storcli64 perccli perccli64 arcconf ssacli hpssacli; do
-        local bin="config/includes.chroot/usr/local/bin/${tool}"
+        local bin="${cli_dir}/${tool}"
+        if [[ ! -e "$bin" ]]; then
+            bin="config/includes.chroot/usr/local/bin/${tool}"
+        fi
         if [[ -x "$bin" ]]; then
             log "  found ${tool}"
             found=1
@@ -140,12 +217,15 @@ preflight() {
                 warn "  ${tool} present but not executable and chmod failed"
             fi
         else
-            warn "  missing ${tool} (drop the vendor archive here before building)"
+            warn "  missing ${tool}"
         fi
     done
+    if [[ "$ARCH" != "amd64" ]]; then
+        warn "  ssacli/perccli have no ${ARCH} build: HPE/Dell RAID management is amd64-only"
+    fi
     if [[ "$found" -eq 0 ]]; then
-        if [[ "$ALLOW_MISSING_TOOLS" == "1" ]]; then
-            warn "no RAID CLI present - building anyway (only sg3_utils/generic mode will work)"
+        if [[ "$ALLOW_MISSING_TOOLS" == "1" || "$ARCH" != "amd64" ]]; then
+            warn "no RAID CLI for ${ARCH} - building in generic mode (sg3_utils/smartctl/nvme-cli)"
         else
             die "no RAID CLI present. See README section 'Vendor tools', or set ALLOW_MISSING_TOOLS=1"
         fi
@@ -264,17 +344,22 @@ stage_sources() {
 
 vendor_wheels() {
     mkdir -p "$VENDOR_DIR"
-    local textual_pin
+    local textual_pin platforms=()
     textual_pin="$(awk -F'==' '/^textual==/{print $2; exit}' app/requirements.txt)"
+    if [[ "$ARCH" == "amd64" ]]; then
+        platforms=(--platform manylinux_2_17_x86_64 --platform manylinux_2_28_x86_64)
+    else
+        platforms=(--platform manylinux2014_aarch64 --platform manylinux_2_17_aarch64 \
+                   --platform manylinux_2_28_aarch64)
+    fi
     if [[ -z "$(ls -A "$VENDOR_DIR" 2>/dev/null)" ]]         || ! compgen -G "${VENDOR_DIR}/textual-${textual_pin}-*.whl" >/dev/null         || ! compgen -G "${VENDOR_DIR}/requests-*.whl" >/dev/null; then
-        log "downloading python wheels for textual ${textual_pin} (Debian 12 ships Python 3.11)"
+        log "downloading ${ARCH} python wheels for textual ${textual_pin} (Debian 12 ships Python 3.11)"
         rm -f "${VENDOR_DIR}"/textual-*.whl "${VENDOR_DIR}"/requests-*.whl
         python3 -m pip download \
             -r app/requirements.txt \
             -d "$VENDOR_DIR" \
             --only-binary=:all: \
-            --platform manylinux_2_17_x86_64 \
-            --platform manylinux_2_28_x86_64 \
+            "${platforms[@]}" \
             --python-version 3.11 \
             --implementation cp \
             --abi cp311 \
@@ -291,9 +376,62 @@ stage_wheels() {
     cp -a "${VENDOR_DIR}/." "${STAGE_WHEELS}/" 2>/dev/null || true
 }
 
+stage_vendor_cli() {
+    local cli_dir="vendor/cli/${ARCH}"
+    local dest="config/includes.chroot/usr/local/bin"
+    if [[ ! -d "$cli_dir" ]]; then
+        log "no vendor/cli/${ARCH} - using the binaries already under ${dest}"
+        return 0
+    fi
+    install -d "$dest"
+    local copied=0
+    while IFS= read -r -d '' file; do
+        install -m 0755 "$file" "${dest}/$(basename "$file")"
+        copied=$((copied + 1))
+    done < <(find "$cli_dir" -maxdepth 1 -type f -print0)
+    log "vendor CLI (${ARCH}): ${copied} file(s) staged from ${cli_dir}"
+}
+
+stage_drivers() {
+    if [[ "$DO_DRIVERS" != "1" ]]; then
+        log "drivers: staging disabled (--no-drivers)"
+        return 0
+    fi
+    local args=(resolve --arch "$ARCH" --profile "$PROFILE")
+    if [[ -n "$PROBE_REPORT" ]]; then
+        [[ -f "$PROBE_REPORT" ]] || die "--probe file not found: ${PROBE_REPORT}"
+        args+=(--probe "$PROBE_REPORT")
+    fi
+    if [[ "$ALLOW_UNKNOWN_DRIVERS" == "1" ]]; then
+        args+=(--allow-unknown)
+    fi
+    if [[ -d chroot/lib/modules ]]; then
+        args+=(--chroot chroot)
+    fi
+    log "drivers: resolve (arch ${ARCH}, profile ${PROFILE}${PROBE_REPORT:+, probe ${PROBE_REPORT}})"
+    python3 tools/drivers.py "${args[@]}" || {
+        local rc=$?
+        if [[ "$rc" -eq 3 ]]; then
+            die "unsupported hardware in the probe report; see messages above or pass --allow-unknown-drivers"
+        fi
+        die "driver resolution failed (exit ${rc})"
+    }
+}
+
+verify_drivers() {
+    if [[ "$DO_DRIVERS" != "1" ]]; then
+        return 0
+    fi
+    if [[ ! -f chroot/etc/raidforge/drivers.installed.json ]]; then
+        warn "no /etc/raidforge/drivers.installed.json in the chroot - skipping driver verification"
+        return 0
+    fi
+    python3 tools/drivers.py verify --arch "$ARCH" --chroot chroot
+}
+
 unstage() {
     log "removing staging artefacts from the image tree"
-    rm -rf "$STAGE_SRC" "$STAGE_WHEELS"
+    rm -rf "$STAGE_SRC" "$STAGE_WHEELS" "$STAGE_DRIVERS"
 }
 
 # --------------------------------------------------------------------------
@@ -332,13 +470,14 @@ lb_config() {
 finalize_image() {
     [[ -d "$(dirname "$SQUASHFS")" ]] || warn "no binary/live directory - the build stopped early"
 
-    if [[ -f live-image-amd64.hybrid.iso ]]; then
-        mv -f live-image-amd64.hybrid.iso "$ISO_OUTPUT"
+    local source_iso="live-image-${ARCH}.hybrid.iso"
+    if [[ -f "$source_iso" ]]; then
+        mv -f "$source_iso" "$ISO_OUTPUT"
         sha256sum "$ISO_OUTPUT" > "${ISO_OUTPUT}.sha256"
         log "image ready: ${ISO_OUTPUT}"
         cat "${ISO_OUTPUT}.sha256"
     else
-        warn "expected live-image-amd64.hybrid.iso not found - check binaries/*.log"
+        warn "expected ${source_iso} not found - check binaries/*.log"
         ls -la . 2>/dev/null | head -20
         return 1
     fi
@@ -354,6 +493,7 @@ do_build() {
     $maybe_sudo lb build
 
     scan_agent_secrets
+    verify_drivers
     log "unstaging build inputs"
     unstage
 
@@ -372,7 +512,9 @@ require_refresh_state() {
     [[ -x chroot/opt/raidforge/venv/bin/python ]] || missing+=("chroot/opt/raidforge/venv (app not installed)")
     [[ -f chroot/usr/local/sbin/raidforge-tui ]] || missing+=("chroot/usr/local/sbin/raidforge-tui")
     [[ -f "$SQUASHFS" ]] || missing+=("$SQUASHFS (binary stage missing)")
-    [[ -f binary/isolinux/isolinux.cfg ]] || missing+=("binary/isolinux/isolinux.cfg")
+    if [[ "$ARCH" == "amd64" ]]; then
+        [[ -f binary/isolinux/isolinux.cfg ]] || missing+=("binary/isolinux/isolinux.cfg")
+    fi
     [[ -f binary/boot/grub/grub.cfg ]] || missing+=("binary/boot/grub/grub.cfg")
     compgen -G "${VENDOR_DIR}/*.whl" >/dev/null || missing+=("${VENDOR_DIR}/*.whl (wheels not downloaded)")
     command -v unsquashfs >/dev/null 2>&1 || missing+=("unsquashfs (squashfs-tools)")
@@ -395,13 +537,20 @@ require_refresh_state() {
 # `--force` means, but it works on every live-build version and lets us detect
 # the dangerous case - a stage that silently answers "already done".
 refresh_stage() {
-    local stage="$1" out marker=".build/$1"
+    local stage="$1"; shift
+    local marker=".build/${stage}"
+    # Some stages (chroot_package-lists / chroot_install-packages) need a pass
+    # argument (install|live) and key their marker off it.
+    if [[ $# -gt 0 ]]; then
+        marker=".build/${stage}.$1"
+    fi
+    local out
     local maybe_sudo=""
     if [[ "$(id -u)" -ne 0 ]]; then maybe_sudo="sudo"; fi
 
     rm -f "$marker"
-    log "stage: ${stage}"
-    if ! out="$($maybe_sudo lb "$stage" 2>&1)"; then
+    log "stage: ${stage}${*:+ $*}"
+    if ! out="$($maybe_sudo lb "$stage" "$@" 2>&1)"; then
         printf '%s\n' "$out" >&2
         die "stage ${stage} failed"
     fi
@@ -430,12 +579,47 @@ verify_freshness() {
 verify_boot_timeout() {
     [[ -n "$ISO_SUFFIX" ]] || return 0
     [[ -n "${RAIDFORGE_BOOT_TIMEOUT:-}" ]] || return 0
-    local tenths=$(( RAIDFORGE_BOOT_TIMEOUT * 10 ))
-    grep -q "^timeout ${tenths}$" binary/isolinux/isolinux.cfg \
-        || die "isolinux timeout was not patched (RAIDFORGE_BOOT_TIMEOUT did not reach the hook)"
+    if [[ "$ARCH" == "amd64" ]]; then
+        local tenths=$(( RAIDFORGE_BOOT_TIMEOUT * 10 ))
+        grep -q "^timeout ${tenths}$" binary/isolinux/isolinux.cfg \
+            || die "isolinux timeout was not patched (RAIDFORGE_BOOT_TIMEOUT did not reach the hook)"
+    fi
     grep -q "^set timeout=${RAIDFORGE_BOOT_TIMEOUT}$" binary/boot/grub/grub.cfg \
         || die "grub timeout was not patched (RAIDFORGE_BOOT_TIMEOUT did not reach the hook)"
     log "boot countdown: ${RAIDFORGE_BOOT_TIMEOUT}s"
+}
+
+# `lb build` reads config/package-lists only in the package stage, which the
+# refresh path skips.  Compare the generated driver list with the one used by
+# the previous build and re-run the package stages when it changed.
+DRIVER_LIST_STAMP=".tmp/drivers-list.sha256"
+
+ensure_package_stage_for_drivers() {
+    local current=""
+    [[ -f config/package-lists/26-drivers.generated.list.chroot ]] \
+        && current="$(sha256sum config/package-lists/26-drivers.generated.list.chroot | awk '{print $1}')"
+    local previous=""
+    [[ -f "$DRIVER_LIST_STAMP" ]] && previous="$(cat "$DRIVER_LIST_STAMP")"
+    if [[ "$current" == "$previous" ]]; then
+        return 0
+    fi
+    log "driver package list changed - re-running the package stages"
+    # A reused chroot normally has no /etc/resolv.conf (live-build strips it
+    # after the chroot stage); apt inside the chroot then cannot resolve the
+    # mirror.  Lend it the host resolver for the duration of the install.
+    local borrowed_resolv=0
+    if [[ -d chroot/etc && ! -s chroot/etc/resolv.conf ]]; then
+        cp /etc/resolv.conf chroot/etc/resolv.conf
+        borrowed_resolv=1
+    fi
+    refresh_stage chroot_package-lists install
+    refresh_stage chroot_install-packages install
+    if [[ "$borrowed_resolv" == "1" ]]; then
+        rm -f chroot/etc/resolv.conf
+    fi
+    mkdir -p "$(dirname "$DRIVER_LIST_STAMP")"
+    [[ -n "$current" ]] && printf '%s\n' "$current" > "$DRIVER_LIST_STAMP"
+    return 0
 }
 
 refresh_build() {
@@ -443,6 +627,11 @@ refresh_build() {
     lb_config
     stage_sources
     stage_wheels
+    stage_vendor_cli
+    stage_drivers
+
+    # Package lists must be refreshed before includes/hooks run.
+    ensure_package_stage_for_drivers
 
     # Order matters: includes puts /usr/src/raidforge in the chroot, hooks turn
     # it into /opt/raidforge, binary_chroot copies the chroot for squashing.
@@ -455,6 +644,7 @@ refresh_build() {
     refresh_stage binary_iso
 
     scan_agent_secrets
+    verify_drivers
     unstage
     verify_boot_timeout
     verify_freshness
@@ -503,14 +693,14 @@ do_clean() {
     local maybe_sudo=""
     if [[ "$(id -u)" -ne 0 ]]; then maybe_sudo="sudo"; fi
     $maybe_sudo lb clean --all || true
-    rm -rf "$STAGE_SRC" "$STAGE_WHEELS"
+    rm -rf "$STAGE_SRC" "$STAGE_WHEELS" "$STAGE_DRIVERS"
     log "cleaned"
 }
 
 # --------------------------------------------------------------------------
 # main
 # --------------------------------------------------------------------------
-trap 'echo; warn "interrupted - cleaning staging tree"; rm -rf "$STAGE_SRC" "$STAGE_WHEELS"' ERR
+trap 'echo; warn "interrupted - cleaning staging tree"; rm -rf "$STAGE_SRC" "$STAGE_WHEELS" "$STAGE_DRIVERS"' ERR
 
 if [[ "$PREFLIGHT_ONLY" == "1" ]]; then
     preflight
@@ -545,6 +735,12 @@ if [[ "$DO_BUILD" == "1" ]]; then
         lb_clean
         stage_sources
         stage_wheels
+        stage_vendor_cli
+        stage_drivers
+        mkdir -p "$(dirname "$DRIVER_LIST_STAMP")"
+        [[ -f config/package-lists/26-drivers.generated.list.chroot ]] \
+            && sha256sum config/package-lists/26-drivers.generated.list.chroot \
+                 | awk '{print $1}' > "$DRIVER_LIST_STAMP"
         do_build
     fi
 fi

@@ -7,6 +7,7 @@
 #   ./tools/iso_update.sh                         # app-only patch or full fallback
 #   ./tools/iso_update.sh --test                  # zstd + -test image
 #   ./tools/iso_update.sh --baseline [--fast]     # force a normal build
+#   ./tools/iso_update.sh --arch arm64            # arm64 state/baseline (VM build)
 #
 set -Eeuo pipefail
 

@@ -1,0 +1,12 @@
+# Firmware blobs for server NICs / HBAs.
+#
+# Deliberately NOT firmware-linux-nonfree: it is only a metapackage that pulls
+# firmware-amd-graphics (hundreds of MB of GPU firmware a headless appliance
+# never loads).  The RAID controllers and NICs in the fleet keep their firmware
+# in on-card flash; firmware-misc-nonfree covers the remaining cases (Intel ice
+# DDP, Netronome, Tehuti, ...).
+#
+# --profile full adds firmware-qlogic / -bnx2 / -bnx2x / -netxen / -myricom /
+# -cavium through the generated list (see tools/drivers.py).
+firmware-linux-free
+firmware-misc-nonfree

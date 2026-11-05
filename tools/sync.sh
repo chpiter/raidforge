@@ -8,11 +8,16 @@
 #   ./tools/sync.sh --dry-run        # list what would be uploaded, upload nothing
 #   ./tools/sync.sh --no-keys        # do NOT upload config/includes.chroot/etc/raidforge/keys
 #   ./tools/sync.sh --with-wheels    # also copy vendor/wheels (off by default)
+#   ./tools/sync.sh --with-drivers   # also copy vendor/cli + vendor/drivers
+#   ./tools/sync.sh --arch arm64     # push to /srv/raidforge-arm64 (arm64 VM)
 #   ./tools/sync.sh --with-keys      # compatibility alias: keys already upload by default
 #   ./tools/sync.sh --watch [secs]   # keep syncing on change (default 3s)
 #   ./tools/sync.sh --run "cmd"      # run a command on the host (no upload)
 #   ./tools/sync.sh --print-excludes # print the transfer exclusion list and exit
 #   REMOTE_DIR=/srv/eraser ./tools/sync.sh
+#
+# With --arch arm64 the tree is pushed to /srv/raidforge-arm64 and --run is
+# executed inside the arm64 VM through tools/arm64_vm.sh.
 #
 # Build artefacts are never uploaded: cache/, chroot/, binary/, .build and
 # *.iso are produced on the build host, and copying them back and forth would
@@ -41,11 +46,13 @@ else
     LOCAL_ARG="$ROOT_DIR"
 fi
 
-REMOTE_DIR="${REMOTE_DIR:-/root/raidforge}"
+REMOTE_DIR="${REMOTE_DIR:-}"
+ARCH_TARGET="${ARCH_TARGET:-amd64}"
 INTERVAL=3
 MODE="once"
 NO_SKIP=""
 ADD_WHEELS=0
+ADD_DRIVERS=0
 SKIP_KEYS=0
 PRINT_EXCLUDES=0
 RUN_CMD=""
@@ -63,6 +70,9 @@ while [[ $# -gt 0 ]]; do
         --all)            NO_SKIP="--no-skip" ;;
         --dry-run)        MODE="dry" ;;
         --with-wheels)    ADD_WHEELS=1 ;;
+        --with-drivers)   ADD_DRIVERS=1 ;;
+        --arch)           [[ -n "${2:-}" ]] || die "--arch needs a value"
+                          ARCH_TARGET="$2"; shift ;;
         --no-keys)        SKIP_KEYS=1 ;;
         --with-keys)      SKIP_KEYS=0 ;;   # compatibility alias
         --print-excludes) PRINT_EXCLUDES=1 ;;
@@ -120,7 +130,11 @@ fi
 if [[ "$ADD_WHEELS" == "0" ]]; then
     # the build host keeps its own wheel cache; re-uploading it every sync is
     # tens of megabytes for no benefit
-    EXCLUDES+=(--exclude vendor)
+    EXCLUDES+=(--exclude 'vendor/wheels')
+fi
+if [[ "$ADD_DRIVERS" == "0" ]]; then
+    # vendor binaries and out-of-tree drivers are large and change rarely
+    EXCLUDES+=(--exclude 'vendor/cli' --exclude 'vendor/drivers/amd64' --exclude 'vendor/drivers/arm64')
 fi
 
 # Used by tests/sync-flags checks: dump the decision without needing ssh.
@@ -162,12 +176,27 @@ pick_python || die "no python with paramiko found - pip install paramiko, or set
 
 [[ -f tools/.remote.env ]] || die "tools/.remote.env missing (REMOTE_HOST / REMOTE_USER / REMOTE_PASS)"
 REMOTE_HOST="$(sed -n 's/^REMOTE_HOST=//p' tools/.remote.env | head -1)"
-log "host ${REMOTE_HOST:-<unset>} -> ${REMOTE_DIR}  (python: ${PYTHON_BIN})"
+
+if [[ -z "$REMOTE_DIR" ]]; then
+    if [[ "$ARCH_TARGET" == "amd64" ]]; then
+        REMOTE_DIR="/root/raidforge"
+    else
+        # Arm64 builds run inside an emulated VM; this host directory is shared
+        # into the VM with virtio-9p and is also where the ISO is copied back.
+        REMOTE_DIR="/srv/raidforge-${ARCH_TARGET}"
+    fi
+fi
+
+log "host ${REMOTE_HOST:-<unset>} -> ${REMOTE_DIR} (arch ${ARCH_TARGET}, python: ${PYTHON_BIN})"
 
 if [[ -n "$RUN_CMD" ]]; then
+    local_cmd="$RUN_CMD"
+    if [[ "$ARCH_TARGET" != "amd64" ]]; then
+        local_cmd="./tools/arm64_vm.sh run \"${local_cmd//\"/\\\"}\""
+    fi
     log "remote: ${RUN_CMD}"
     set +e
-    "$PYTHON_BIN" tools/rssh.py exec "cd '${REMOTE_DIR}' && ${RUN_CMD}"
+    "$PYTHON_BIN" tools/rssh.py exec "cd '${REMOTE_DIR}' && ${local_cmd}"
     rc=$?
     set -e
     exit "$rc"
@@ -182,7 +211,9 @@ fi
 fix_modes() {
     "$PYTHON_BIN" tools/rssh.py exec "cd '${REMOTE_DIR}' && \
 chmod 0755 build.sh tools/*.sh tools/*.py 2>/dev/null; \
-chmod 0755 auto/* config/hooks/live/*.hook.* config/includes.chroot/usr/local/sbin/raidforge-tui 2>/dev/null; \
+chmod 0755 auto/* config/hooks/live/*.hook.* 2>/dev/null; \
+chmod 0755 config/includes.chroot/usr/local/sbin/* 2>/dev/null; \
+find vendor/cli -mindepth 2 -maxdepth 2 -type f -exec chmod 0755 {} + 2>/dev/null; \
 find tests -name '*.sh' -exec chmod 0755 {} + 2>/dev/null; \
 chmod 0755 config/includes.chroot/usr/local/bin/storcli config/includes.chroot/usr/local/bin/storcli64 config/includes.chroot/usr/local/bin/perccli config/includes.chroot/usr/local/bin/perccli64 config/includes.chroot/usr/local/bin/arcconf config/includes.chroot/usr/local/bin/ssacli config/includes.chroot/usr/local/bin/hpssacli 2>/dev/null; \
 if [ -d config/includes.chroot/etc/raidforge/keys ]; then chmod 0700 config/includes.chroot/etc/raidforge/keys; find config/includes.chroot/etc/raidforge/keys -type f -exec chmod 0600 {} +; fi; \
@@ -230,7 +261,7 @@ while true; do
     changed="$(find . \
         \( -name .git -o -name cache -o -name chroot -o -name binary -o -name .build \
            -o -name bootstrap -o -name __pycache__ -o -name .pytest_cache -o -name .cache \
-           -o -name .venv -o -name vendor \) -prune \
+           -o -name .venv \) -prune \
         -o -type f -newer "$STAMP" -print 2>/dev/null | head -5)"
     if [[ -n "$changed" ]]; then
         log "change detected:"

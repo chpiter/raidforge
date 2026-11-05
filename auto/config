@@ -11,6 +11,16 @@ set -e
 DISTRO="${DISTRO:-bookworm}"
 ARCH="${ARCH:-amd64}"
 
+# syslinux has no arm64 port: arm64 images boot through UEFI/GRUB only.
+BOOTLOADERS="syslinux,grub-efi"
+BOOTAPPEND="boot=live components hostname=raidforge username=root ip=dhcp quiet"
+if [ "$ARCH" != "amd64" ]; then
+    BOOTLOADERS="grub-efi"
+    # tty0 keeps the TUI on the BMC/KVM console; ttyAMA0 covers serial-only
+    # access (QEMU virt, headless rack installs).
+    BOOTAPPEND="$BOOTAPPEND console=tty0 console=ttyAMA0,115200n8"
+fi
+
 # Mirror actually reachable from the build network.  debootstrap, the build
 # chroot and the runtime apt sources of the live image all point here so an
 # offline-ish intranet build never waits on deb.debian.org.
@@ -24,7 +34,7 @@ lb config noauto \
     --distribution "${DISTRO}" \
     --architecture "${ARCH}" \
     --binary-images iso-hybrid \
-    --bootloaders "syslinux,grub-efi" \
+    --bootloaders "${BOOTLOADERS}" \
     --archive-areas "main non-free-firmware" \
     --mirror-bootstrap "${MIRROR}" \
     --mirror-chroot "${MIRROR}" \
@@ -52,5 +62,5 @@ lb config noauto \
     --checksums sha256 \
     --memtest none \
     --iso-volume "RAIDFORGE" \
-    --bootappend-live "boot=live components hostname=raidforge username=root ip=dhcp quiet" \
+    --bootappend-live "${BOOTAPPEND}" \
     "$@"

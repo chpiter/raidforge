@@ -73,6 +73,45 @@ def test_create_rejects_unsupported_policies():
     assert task.params["raid_level"] == "RAID5"
 
 
+def test_create_stripe_and_init_defaults():
+    base = {
+        "controller_id": "lsi:SN1",
+        "name": "vd1",
+        "raid_level": "raid5",
+        "pds": [{"serial": "ZA1", "wwn": "0x5000c500a1b2c3d4", "expected_size_bytes": 100}],
+    }
+    task = parse_task(make_envelope(task_type="create_raid", params=base))
+    assert task.params["strip_size_kb"] is None
+    assert task.params["init"] == "fast"
+
+    explicit = parse_task(
+        make_envelope(
+            task_type="create_raid",
+            params={**base, "strip_size_kb": 512, "init": "none"},
+        )
+    )
+    assert explicit.params["strip_size_kb"] == 512
+    assert explicit.params["init"] == "none"
+
+    for omitted in (0, None, ""):
+        task = parse_task(
+            make_envelope(task_type="create_raid", params={**base, "strip_size_kb": omitted})
+        )
+        assert task.params["strip_size_kb"] is None
+
+    with pytest.raises(TaskRejected) as exc:
+        parse_task(
+            make_envelope(task_type="create_raid", params={**base, "strip_size_kb": 8})
+        )
+    assert exc.value.error_code == "invalid_params"
+    assert exc.value.field == "strip_size_kb"
+
+    with pytest.raises(TaskRejected) as exc:
+        parse_task(make_envelope(task_type="create_raid", params={**base, "init": "quick"}))
+    assert exc.value.error_code == "invalid_params"
+    assert exc.value.field == "init"
+
+
 def test_envelope_mismatch_and_expiry():
     task = parse_task(make_envelope())
     now = datetime(2026, 11, 4, 10, 0, tzinfo=timezone.utc)

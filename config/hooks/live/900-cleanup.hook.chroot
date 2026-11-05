@@ -7,10 +7,13 @@ set -Eeuo pipefail
 echo "== raidforge: cleanup =="
 
 # Build inputs must not be shipped inside the image.
-rm -rf /usr/src/raidforge /usr/src/raidforge-vendor
+rm -rf /usr/src/raidforge /usr/src/raidforge-vendor /usr/src/raidforge-drivers
 rm -rf /opt/raidforge/__pycache__ /opt/raidforge/*/__pycache__ /opt/raidforge/*/*/__pycache__ 2>/dev/null || true
 find /opt/raidforge -name '*.pyc' -delete 2>/dev/null || true
 rm -f /run/raidforge.done
+
+# DKMS sources and build leftovers from 070-drivers (the modules themselves stay).
+rm -rf /var/lib/dkms /usr/src/*-* 2>/dev/null || true
 
 apt-get clean
 rm -rf /var/lib/apt/lists/* /var/cache/apt/*.bin /var/cache/apt/archives/*.deb

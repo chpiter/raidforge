@@ -69,6 +69,21 @@ def _optional_int(payload: Dict[str, Any], key: str, default: int, *, minimum: i
     return value
 
 
+def _optional_stripe(payload: Dict[str, Any], key: str) -> Optional[int]:
+    value = payload.get(key)
+    if value in (None, "", 0):
+        return None
+    if not _is_int(value):
+        raise TaskRejected("invalid_params", f"{key} 必须是整数", field=key)
+    if value < 16 or value > 4096:
+        raise TaskRejected(
+            "invalid_params",
+            f"{key} 超出范围 16..4096（留空或 0 表示控制器默认）",
+            field=key,
+        )
+    return int(value)
+
+
 def _require_str(payload: Dict[str, Any], key: str, *, maximum: int = 256) -> str:
     value = payload.get(key)
     if not isinstance(value, str) or not value.strip() or len(value) > maximum:
@@ -248,7 +263,7 @@ def _create_params(params: Dict[str, Any]) -> Dict[str, Any]:
         raise TaskRejected("raid_level_unsupported", f"不支持的 RAID 级别 {level_raw!r}", field="raid_level")
     level = _RAID_LEVELS[level_raw]
     selectors = _selectors(params)
-    stripe = _optional_int(params, "strip_size_kb", 256, minimum=16, maximum=4096)
+    stripe = _optional_stripe(params, "strip_size_kb")
 
     # core 只支持默认策略；非默认值明确拒绝，而不是静默忽略。
     read_policy = _optional_str(params, "read_policy", "no_read_ahead", maximum=32)
@@ -257,9 +272,13 @@ def _create_params(params: Dict[str, Any]) -> Dict[str, Any]:
     write_policy = _optional_str(params, "write_policy", "write_back", maximum=32)
     if write_policy not in ("write_back", ""):
         raise TaskRejected("invalid_params", "write_policy 未实现", field="write_policy")
-    init = _optional_str(params, "init", "none", maximum=32)
-    if init not in ("none", ""):
-        raise TaskRejected("invalid_params", "init 未实现", field="init")
+    init = _optional_str(params, "init", "fast", maximum=32).strip().lower()
+    if init in ("", "fast"):
+        init = "fast"
+    elif init == "none":
+        init = "none"
+    else:
+        raise TaskRejected("invalid_params", "init 仅支持 fast/none", field="init")
     size_bytes = params.get("size_bytes")
     if size_bytes not in (None, 0):
         raise TaskRejected("invalid_params", "size_bytes 未实现", field="size_bytes")
@@ -276,6 +295,7 @@ def _create_params(params: Dict[str, Any]) -> Dict[str, Any]:
         "raid_level": level,
         "pds": selectors,
         "strip_size_kb": stripe,
+        "init": init,
         "dry_run": dry_run,
     }
 

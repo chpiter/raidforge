@@ -77,7 +77,7 @@ def test_lsi_raid0_single_and_per_disk():
     disks = [lsi_disk(0), lsi_disk(1)]
     single = create_plans(controller, build_layout(RaidLevel.RAID0, disks, name="RG0"))
     assert [plan.argv for plan in single] == [
-        ["storcli", "/c0", "add", "vd", "r0", "drives=32:0,32:1", "size=all", "strip=256", "name=RG0"]
+        ["storcli", "/c0", "add", "vd", "r0", "drives=32:0,32:1", "size=all", "name=RG0"]
     ]
 
     per_disk = create_plans(
@@ -111,9 +111,28 @@ def test_lsi_raid1_raid5_raid10():
         "r10",
         "drives=32:0,32:1,32:2,32:3",
         "size=all",
-        "strip=256",
         "pdperarray=2",
         "name=RG10",
+    ]
+
+
+def test_lsi_explicit_stripe_is_emitted():
+    controller = lsi_controller()
+    layout = build_layout(
+        RaidLevel.RAID10,
+        [lsi_disk(0), lsi_disk(1), lsi_disk(2), lsi_disk(3)],
+        stripe_kb=128,
+    )
+    assert create_plans(controller, layout)[0].argv == [
+        "storcli",
+        "/c0",
+        "add",
+        "vd",
+        "r10",
+        "drives=32:0,32:1,32:2,32:3",
+        "size=all",
+        "strip=128",
+        "pdperarray=2",
     ]
 
 
@@ -164,10 +183,10 @@ def test_adaptec_create_levels():
         "create",
         "1",
         "logicaldrive",
-        "stripesize",
-        "256",
         "name",
         "RG10",
+        "method",
+        "quick",
         "MAX",
         "10",
         "0",
@@ -180,6 +199,41 @@ def test_adaptec_create_levels():
         "3",
         "noprompt",
     ]
+
+
+def test_adaptec_explicit_stripe_and_no_init():
+    controller = pmc_controller()
+    disks = [pmc_disk(0), pmc_disk(1)]
+    explicit = create_plans(
+        controller,
+        build_layout(RaidLevel.RAID1, disks, name="RG1", stripe_kb=512),
+    )[0]
+    assert explicit.argv == [
+        "arcconf",
+        "create",
+        "1",
+        "logicaldrive",
+        "stripesize",
+        "512",
+        "name",
+        "RG1",
+        "method",
+        "quick",
+        "MAX",
+        "1",
+        "0",
+        "0",
+        "0",
+        "1",
+        "noprompt",
+    ]
+
+    no_init = create_plans(
+        controller,
+        build_layout(RaidLevel.RAID1, disks, name="RG1", init="none"),
+    )[0]
+    assert "method" not in no_init.argv
+    assert "quick" not in no_init.argv
 
 
 def test_adaptec_delete_and_clear():
@@ -216,7 +270,6 @@ def test_hpe_create_raid1_and_raid10():
         "type=ld",
         "drives=1I:1:1,1I:1:2",
         "raid=1",
-        "ss=256",
         "label=RG1",
         "forced",
     ]
@@ -226,6 +279,36 @@ def test_hpe_create_raid1_and_raid10():
     )
     assert "raid=1+0" in raid10[0].argv
     assert "drives=1I:1:1,1I:1:2,1I:1:3,1I:1:4" in raid10[0].argv
+    assert "parityinitializationmethod=rapid" not in raid10[0].argv
+
+
+def test_hpe_raid5_uses_rapid_parity_init_and_explicit_stripe():
+    controller = hpe_controller()
+    disks = [hpe_disk(index) for index in range(3)]
+    default = create_plans(controller, build_layout(RaidLevel.RAID5, disks))[0]
+    assert default.argv == [
+        "ssacli",
+        "ctrl",
+        "slot=0",
+        "create",
+        "type=ld",
+        "drives=1I:1:1,1I:1:2,1I:1:3",
+        "raid=5",
+        "parityinitializationmethod=rapid",
+        "forced",
+    ]
+
+    explicit = create_plans(
+        controller,
+        build_layout(RaidLevel.RAID5, disks, stripe_kb=512),
+    )[0]
+    assert "ss=512" in explicit.argv
+
+    no_init = create_plans(
+        controller,
+        build_layout(RaidLevel.RAID5, disks, init="none"),
+    )[0]
+    assert "parityinitializationmethod=rapid" not in no_init.argv
 
 
 def test_hpe_per_disk_raid0():
@@ -236,6 +319,7 @@ def test_hpe_per_disk_raid0():
     )
     assert len(plans) == 2
     assert all("raid=0" in plan.argv for plan in plans)
+    assert all("parityinitializationmethod=rapid" not in plan.argv for plan in plans)
     assert plans[0].argv[5] == "drives=1I:1:1"
     assert plans[1].argv[5] == "drives=1I:1:2"
 

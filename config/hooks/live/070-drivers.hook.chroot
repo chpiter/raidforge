@@ -1,0 +1,173 @@
+#!/bin/bash
+#
+# Install the out-of-tree drivers / firmware staged by tools/drivers.py.
+#
+# Inputs (created by `tools/drivers.py resolve`, removed by 900-cleanup):
+#   /usr/src/raidforge-drivers/<arch>/manifest.json
+#   /usr/src/raidforge-drivers/<arch>/payload/{debs,ko,dkms,firmware}
+#
+# The manifest is authoritative: it lists the modules the resolver decided are
+# required for the target hardware and whether a missing module must fail the
+# build (strict) or only warn (default catalog mode).
+#
+set -Eeuo pipefail
+
+echo "== raidforge: drivers =="
+
+ARCH="$(dpkg --print-architecture)"
+ROOT="/usr/src/raidforge-drivers/${ARCH}"
+MANIFEST="${ROOT}/manifest.json"
+
+if [[ ! -f "$MANIFEST" ]]; then
+    echo "no driver manifest for ${ARCH} - in-tree kernel modules only"
+    exit 0
+fi
+
+PAYLOAD="${ROOT}/payload"
+KVER="$(ls -1 /lib/modules 2>/dev/null | sort -V | tail -1)"
+if [[ -z "$KVER" ]]; then
+    echo "!! no kernel under /lib/modules - cannot install drivers" >&2
+    exit 1
+fi
+echo "kernel: ${KVER}"
+
+# ---- prebuilt debs ---------------------------------------------------------
+shopt -s nullglob
+debs=("${PAYLOAD}"/debs/*.deb)
+if [[ ${#debs[@]} -gt 0 ]]; then
+    for deb in "${debs[@]}"; do
+        debarch="$(dpkg-deb -f "$deb" Architecture 2>/dev/null || echo unknown)"
+        if [[ "$debarch" != "$ARCH" && "$debarch" != "all" ]]; then
+            echo "!! ${deb} is ${debarch}, image is ${ARCH}" >&2
+            exit 1
+        fi
+        echo "installing deb: $(basename "$deb")"
+        dpkg -i "$deb" || apt-get -y --fix-broken install || {
+            echo "!! failed to install ${deb}" >&2
+            exit 1
+        }
+    done
+fi
+
+# ---- raw kernel modules ----------------------------------------------------
+if [[ -d "${PAYLOAD}/ko" ]]; then
+    dest="/lib/modules/${KVER}/updates/raidforge"
+    install -d "$dest"
+    while IFS= read -r -d '' ko; do
+        echo "installing module: $(basename "$ko")"
+        cp -f "$ko" "$dest/"
+    done < <(find "${PAYLOAD}/ko" -type f -name '*.ko*' -print0)
+fi
+
+# ---- raw firmware ----------------------------------------------------------
+if [[ -d "${PAYLOAD}/firmware" ]]; then
+    install -d /lib/firmware
+    cp -a "${PAYLOAD}/firmware/." /lib/firmware/
+    echo "firmware tree copied into /lib/firmware"
+fi
+
+# ---- dkms sources (optional, needs headers + compiler) --------------------
+if [[ -d "${PAYLOAD}/dkms" ]]; then
+    for src in "${PAYLOAD}"/dkms/*/; do
+        [[ -f "${src}dkms.conf" ]] || continue
+        name="$(basename "$src")"
+        echo "building dkms package: ${name}"
+        apt-get install -y --no-install-recommends dkms "linux-headers-${KVER}" build-essential >/dev/null 2>&1 || true
+        cp -a "$src" "/usr/src/${name}"
+        dkms add "/usr/src/${name}" || true
+        dkms build -k "$KVER" -m "$name" || {
+            echo "!! dkms build failed for ${name}" >&2
+            exit 1
+        }
+        dkms install -k "$KVER" -m "$name" --force || {
+            echo "!! dkms install failed for ${name}" >&2
+            exit 1
+        }
+    done
+fi
+
+# ---- depmod + initramfs ---------------------------------------------------
+depmod -a "$KVER"
+if command -v update-initramfs >/dev/null 2>&1; then
+    update-initramfs -u -k "$KVER" >/dev/null 2>&1 || \
+        echo "!! update-initramfs failed (driver is still loadable after boot)" >&2
+fi
+
+# ---- verify + record ------------------------------------------------------
+install -d /etc/raidforge
+python3 - "$MANIFEST" "$KVER" <<'PY'
+import glob
+import json
+import os
+import sys
+
+manifest_path, kver = sys.argv[1], sys.argv[2]
+with open(manifest_path, encoding="utf-8") as handle:
+    manifest = json.load(handle)
+
+module_root = f"/lib/modules/{kver}"
+strict = bool(manifest.get("strict"))
+problems = []
+installed_modules = []
+
+for entry in manifest.get("modules", []):
+    module = entry.get("module", "")
+    required = bool(entry.get("required")) or strict
+    matches = glob.glob(f"{module_root}/**/{module}.ko*", recursive=True)
+    present = bool(matches)
+    record = {
+        "module": module,
+        "required": required,
+        "present": present,
+        "path": os.path.relpath(matches[0], module_root) if matches else "",
+        "devices": entry.get("devices", []),
+    }
+    installed_modules.append(record)
+    if not present:
+        message = f"module {module} not found under {module_root}"
+        if required:
+            problems.append(message)
+        else:
+            print(f"warning: {message}", file=sys.stderr)
+
+installed_firmware = []
+for entry in manifest.get("firmware", []):
+    name = entry.get("file", "")
+    present = os.path.isfile(f"/lib/firmware/{name}")
+    installed_firmware.append({
+        "file": name,
+        "package": entry.get("package", ""),
+        "required": bool(entry.get("required")) or strict,
+        "present": present,
+    })
+    if not present and (entry.get("required") or strict):
+        problems.append(f"firmware {name} missing from /lib/firmware")
+
+installed = {
+    "schema": 1,
+    "arch": manifest.get("arch"),
+    "profile": manifest.get("profile"),
+    "catalog_version": manifest.get("catalog_version"),
+    "strict": strict,
+    "kernel": kver,
+    "modules": installed_modules,
+    "firmware": installed_firmware,
+    "packages": manifest.get("packages", []),
+    "warnings": manifest.get("warnings", []),
+    "unsupported": manifest.get("unsupported", []),
+}
+with open("/etc/raidforge/drivers.installed.json", "w", encoding="utf-8") as handle:
+    json.dump(installed, handle, indent=2, sort_keys=True)
+    handle.write("\n")
+
+for warning in installed["warnings"]:
+    print(f"warning: {warning}", file=sys.stderr)
+if problems:
+    for problem in problems:
+        print(f"!! {problem}", file=sys.stderr)
+    raise SystemExit(1)
+print(f"drivers verified: {len(installed_modules)} module(s), "
+      f"{len(installed_firmware)} firmware file(s)")
+PY
+
+echo "== raidforge: drivers done =="

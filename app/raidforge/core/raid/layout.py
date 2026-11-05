@@ -98,8 +98,9 @@ def build_layout(
     disks: List[DiskInfo],
     mode: Raid0Mode = Raid0Mode.SINGLE,
     name: str = "",
-    stripe_kb: int = 256,
+    stripe_kb: Optional[int] = None,
     name_max_len: int = 15,
+    init: str = "fast",
 ) -> RaidLayout:
     """Build a layout (spans, names, capacity, warnings) from a disk list.
 
@@ -110,6 +111,12 @@ def build_layout(
 
     ordered = sort_disks(list(disks))
     effective_mode = mode if level is RaidLevel.RAID0 else Raid0Mode.SINGLE
+    stripe = None
+    if stripe_kb not in (None, "", 0):
+        stripe = int(stripe_kb)
+        if stripe <= 0:
+            stripe = None
+    init_value = "none" if str(init or "").strip().lower() == "none" else "fast"
 
     if level is RaidLevel.RAID10:
         spans = [ordered[index : index + 2] for index in range(0, len(ordered), 2)]
@@ -151,7 +158,8 @@ def build_layout(
         level=level,
         disks=ordered,
         mode=effective_mode,
-        stripe_kb=int(stripe_kb),
+        stripe_kb=stripe,
+        init=init_value,
         name=sanitized,
         spans=[[disk.disk_id for disk in span] for span in spans],
         volume_names=volume_names,

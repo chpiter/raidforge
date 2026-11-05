@@ -37,7 +37,26 @@ def test_key_is_synced_by_default():
     output = _excludes()
     assert "--exclude" in output
     assert "keys" not in output.split()
-    assert "vendor" in output.split()  # wheels stay opt-in
+    # wheels and driver payloads stay opt-in (--with-wheels / --with-drivers)
+    assert "vendor/wheels" in output
+    assert "vendor/cli" in output
+
+
+def test_with_drivers_includes_vendor_payloads():
+    output = _excludes("--with-drivers")
+    assert "vendor/cli" not in output
+    assert "vendor/wheels" in output
+
+
+def test_arm64_flag_is_accepted():
+    completed = subprocess.run(
+        ["bash", str(SYNC), "--arch", "arm64", "--print-excludes"],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert completed.returncode == 0, completed.stderr
+    assert "--exclude" in completed.stdout
 
 
 def test_no_keys_excludes_the_key_directory():

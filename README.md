@@ -202,17 +202,69 @@ chmod 755 config/includes.chroot/usr/local/bin/arcconf
 创建 `storcli` / `ssacli` shim，保证原有擦除命令表（argv[0] 固定为 canonical 名）
 不需要改动。RAID provider 则直接使用探测到的实际二进制。
 
+**按架构分目录（推荐）**：`vendor/cli/amd64/` 与 `vendor/cli/arm64/`。`build.sh` 只把
+目标架构目录里的文件拷进镜像；`config/includes.chroot/usr/local/bin/` 的旧布局仍然兼容
+（amd64）。aarch64 可用的闭源 CLI：Broadcom/华为的 `storcli`、Microchip 的
+`arcconf`（debianarm/aarch64 包）；`ssacli`、`perccli` 没有 aarch64 版本，ARM 上
+HPE/Dell 卡只能走 generic 模式，构建时会给出告警。
+
+### 2.3 驱动与固件封装
+
+Debian 12（kernel 6.1）在 amd64 与 arm64 上都内置了现场常见阵列卡/网卡的驱动，
+固件多数在板卡 Flash 上，不需要额外 blob：
+
+| 设备 | 内核模块 | 额外固件包 | 管理 CLI |
+|---|---|---|---|
+| LSI 9361 / 9460 / 9560（MegaRAID SAS3） | `megaraid_sas` | 无 | `storcli` |
+| PMC/Adaptec SmartRAID | `smartpqi` | 无 | `arcconf` |
+| 旧 Adaptec Series 6/7/8 | `aacraid` | 无 | `arcconf` |
+| HPE Smart Array P440（Gen9） | `hpsa` | 无 | `ssacli`（仅 amd64） |
+| Intel 82599 | `ixgbe` | 无 | — |
+| Intel X710 | `i40e` | 无 | — |
+| Intel E810 | `ice` | `firmware-misc-nonfree`（DDP） | — |
+| Mellanox ConnectX-4/5/6 | `mlx5_core` + `mlxfw` | 卡载 | — |
+| Kunpeng 920 板载 SAS / 网卡 | `hisi_sas_v3_hw` / `hns3` | 无 | — |
+| QLogic FC HBA | `qla2xxx` | `firmware-qlogic`（`--profile full`） | — |
+
+镜像默认安装 `firmware-linux-free` + `firmware-misc-nonfree`（精简，约 +30–60 MB）；
+`--profile full` 追加 qlogic/bnx2x/cavium 等全套（约 +150–250 MB）。**不要**直接装
+`firmware-linux-nonfree`：它只是元包，会拖入服务器用不上的 GPU 固件。
+
+新硬件接入流程：
+
+```bash
+# 1) 在目标服务器上（或启动本 ISO 后）采集硬件报告
+raidforge-probe -o /media/usb/hw.json
+
+# 2) 构建前解析：匹配 catalog / modules.alias / 固件包
+python3 tools/drivers.py resolve --arch amd64 --probe hw.json --profile minimal
+
+# 或者把报告放进 vendor/drivers/probes/，构建时自动合并（推荐批量现场）
+cp hw*.json vendor/drivers/probes/
+
+# 3) 正常构建（build.sh 会自动执行第 2 步并做构建后校验）
+./build.sh
+```
+
+解析不出驱动时，把厂商产物放进 `vendor/drivers/<arch>/`：`debs/`（预编译 .deb）、
+`ko/`（裸模块）、`dkms/`（含 `dkms.conf` 的源码）、`firmware/`（按 `/lib/firmware`
+相对路径）。构建后 `tools/drivers.py verify` 会检查模块、固件和 `modprobe -n`；
+显式传入 `--probe` 时，无法识别的存储/网络设备会让构建失败（`--allow-unknown-drivers`
+可降级为告警）。目录约定见 `vendor/drivers/README.md`。
+
 ---
 
 ## 3. 构建步骤
 
 ```bash
-./build.sh               # 默认：preflight → 下载 wheel → lb clean（保留缓存）→ lb build（~6m45s）
-./build.sh --refresh     # 复用 chroot，只重跑携带 app 的阶段（~4m）
-./build.sh --fast        # --refresh + zstd level 1 + 1s 引导倒计时（~2m，产物带 -test 后缀）
+./build.sh               # 默认：preflight → 解析驱动 → 下载 wheel → lb clean（保留缓存）→ lb build
+./build.sh --refresh     # 复用 chroot，只重跑携带 app 的阶段
+./build.sh --fast        # --refresh + zstd level 1 + 1s 引导倒计时（产物带 -test 后缀）
+./build.sh --probe hw.json --profile full   # 按现场硬件报告解析驱动 + 全量固件
+./build.sh --no-drivers  # 跳过驱动解析/校验（只装静态包列表）
 ./build.sh --full-clean  # 从零重建：lb clean --all，丢掉 bootstrap 树与 deb 缓存
 ./build.sh --vendor-only # 只拉 Python wheel（离线环境的准备工作）
-./build.sh --no-vendor   # 复用已有的 vendor/wheels/
+./build.sh --no-vendor   # 复用已有的 vendor/wheels/<arch>/
 ./build.sh --preflight   # 只做环境校验
 ./build.sh --clean       # 清理
 ```
@@ -293,8 +345,9 @@ SECURITY=http://mirrors.aliyun.com/debian-security/ ./build.sh --full-clean
 
 产出（`<YYYYmmdd>` 是构建当天日期，`--fast` 会多一个 `-test` 后缀）：
 
-```
-raidforge-<version>-<YYYYmmdd>.iso
+```bash
+raidforge-<version>-<YYYYmmdd>.iso              # amd64
+raidforge-<version>-<YYYYmmdd>-arm64.iso        # arm64（-test 在最后）
 raidforge-<version>-<YYYYmmdd>.iso.sha256
 ```
 
@@ -306,6 +359,36 @@ sudo dd if=raidforge-<version>-<YYYYmmdd>.iso of=/dev/sdX bs=4M status=progress 
 
 > UEFI + BIOS 双引导由 `--binary-images iso-hybrid --bootloaders syslinux,grub-efi`
 > 提供。`dd` 出来的盘在两种固件下都能起；如果用 Ventoy/Rufus，请选择 **DD 模式**而非 ISO 模式。
+> arm64 镜像只有 UEFI/GRUB 引导（syslinux 没有 arm64 端口），Kunpeng 需关闭 Secure Boot。
+
+### 3.2 arm64（Kunpeng 920）构建
+
+开发机与构建机都是 x86_64，ARM 镜像在**构建机上的 arm64 虚拟机**里原生构建
+（qemu-system-aarch64 + Debian 12 genericcloud + virtio-9p 共享目录）：
+
+```bash
+make vm-host-prep            # 一次性：构建机安装 qemu-system-arm / qemu-efi-aarch64 / cloud-image-utils
+make vm-init                 # 一次性：下载 cloud image、建 24G 磁盘、cloud-init 装构建工具
+make vm-start                # 启动 VM（首次 cloud-init 装包，TCG 下 20-40 分钟）
+make remote-build-arm64      # 同步 + 在 VM 内执行 ./build.sh
+make iso-update-arm64        # 变更分类后重建（arm64 不走 app-only 补丁路径）
+./tools/sync.sh --arch arm64 --run "./build.sh --fast"   # 迭代用测试镜像
+./tools/sync.sh --run "bash /root/raidforge/tools/arm64_vm.sh pull"  # 取回 ISO
+```
+
+要点：
+
+* 构建目录在 VM 内 `/root/raidforge`，宿主共享目录 `/srv/raidforge-arm64`；live-build
+  状态按工作树隔离，amd64 与 arm64 互不影响。
+* 构建机内存不足 4 GB 时先启用 swap（`fallocate -l 4G /swapfile && mkswap /swapfile
+  && swapon /swapfile`），否则 QEMU 分配不了客户机内存；`arm64_vm.sh` 默认
+  `MEM=2048 SMP=2`，并在客户机内自动创建 2 GB swapfile 供 live-build/mksquashfs 使用。
+* `build.sh` 用 `dpkg --print-architecture` 判定架构，**不做交叉编译**；在 x86 上
+  传 `--arch arm64` 会直接报错，必须进 VM。
+* Python wheel 自动下载 aarch64 平台（`vendor/wheels/arm64/`）；ISO 名称带 `-arm64`。
+* 未投放 ARM 版厂商 CLI 时会自动降级 generic 模式并告警（`vendor/cli/arm64/`）。
+* 首次全量构建在 TCG 下预计 1–2 小时；日常用 `--fast`。最终仍需在真 Kunpeng 上验证
+  启动、`hisi_sas`/`hns3` 绑定和 RAID CLI 探测；QEMU 只能做引导/TUI 烟测。 
 
 ### Python 依赖为什么走 wheel
 
@@ -454,6 +537,10 @@ IP、用户名、私钥这些参数**只在两个地方**有实际作用：仓�
 配置读取优先级（低 → 高）：dataclass 默认值 < `/etc/raidforge/config.yaml` <
 `/etc/raidforge/config.d/*.yaml`（按文件名排序）< `--config` < `RAIDFORGE_*` 环境变量 <
 `--set` / TUI 内存值。
+
+> RAID 创建默认：`raid.stripe_kb: null`（不传条带，使用控制器默认）与
+> `raid.init: "fast"`（有厂商快速初始化选项时下发）。显式写 `stripe_kb: 256`
+> 会恢复“固定 256K 条带”的旧行为；`init: none` 表示不下发初始化选项。
 
 ### 5.1 主通道：rsync over SSH（推荐）
 
@@ -824,8 +911,15 @@ Tasks    --Enter--> 实时日志；C 取消
   状态不确定时一律 blocked，绝不猜测。
 - RAID10 的 span 配对是确定性的：按控制器/位置排序后相邻两盘成一组，预览会显示
   `1) e32/s0 + e32/s1 2) ...`。
-- 条带固定 `raid.stripe_kb`（默认 256K）；不显式设置缓存策略；不显式指定初始化方式，
-  走控制器默认（创建后可能仍在后台初始化，需重扫确认）。
+- 条带默认**不指定**（`raid.stripe_kb: null`），由控制器选择默认值；显式设置正整数
+  `raid.stripe_kb` 时才会下发 `strip=` / `stripesize` / `ss=`。
+- 初始化默认**快速**（`raid.init: fast`）：
+  - Adaptec：`method quick`；
+  - HPE：仅 RAID5 下发 `parityinitializationmethod=rapid`，RAID0/1/10 无校验初始化，
+    由控制器自动快速完成；
+  - LSI：storcli 新建 VD 默认即 fast init，不额外下发参数。
+- 创建后可能仍在后台初始化，需重扫确认；`init: none` 表示不下发初始化选项，
+  不是禁止初始化。
 - 名称可选，清洗为 `[A-Za-z0-9_-]`，最长 `raid.name_max_len`（默认 15）；一盘一 VD
   模式会自动加 `-d01`、`-d02` 后缀。
 
@@ -1030,13 +1124,14 @@ python3 -m raidforge --set report.transport=http --set report.http_port=8080
 
 | 厂商 | VD 列表/成员 | 创建 | 删除 VD | 清除配置 |
 |---|---|---|---|---|
-| LSI/PERC | `storcli /cN/vall show all J` | `add vd r0/r1/r5/r10 drives=E:S,... size=all strip=256 [pdperarray=2] [name=]` | `/cN/vM delete force` | `/cN/vall delete force` + `/cN/fall delete` |
-| Adaptec | `arcconf getconfigjson N` / `getconfig N ld` | `create N logicaldrive [stripesize 256] [name X] MAX <level> <ch> <dev>... noprompt` | `delete N logicaldrive M noprompt` | `delete N array ALL noprompt` + `uninit N all` |
-| HPE | `ssacli ctrl slot=N ld all show detail` + `pd all show` | `create type=ld drives=ref,... raid=0/1/5/1+0 ss=256 [label=X] forced` | `ld M delete forced` | `ld all delete forced` + `modify clearconfig forced` |
+| LSI/PERC | `storcli /cN/vall show all J` | `add vd r0/r1/r5/r10 drives=E:S,... size=all [strip=N] [pdperarray=2] [name=]` | `/cN/vM delete force` | `/cN/vall delete force` + `/cN/fall delete` |
+| Adaptec | `arcconf getconfigjson N` / `getconfig N ld` | `create N logicaldrive [stripesize N] [name X] method quick MAX <level> <ch> <dev>... noprompt` | `delete N logicaldrive M noprompt` | `delete N array ALL noprompt` + `uninit N all` |
+| HPE | `ssacli ctrl slot=N ld all show detail` + `pd all show` | `create type=ld drives=ref,... raid=0/1/5/1+0 [ss=N] [parityinitializationmethod=rapid（仅 RAID5）] [label=X] forced` | `ld M delete forced` | `ld all delete forced` + `modify clearconfig forced` |
 | Generic | 无 | 不支持 | 不支持 | 不支持 |
 
 > ⚠️ **RAID 命令同样需要现场核对**：源码中标 `VERIFY` 的项包括
-> `vall delete force` 的 force 接受度、`arcconf stripesize/name` 的位置、
+> `vall delete force` 的 force 接受度、`arcconf stripesize/name/method` 的位置、
+> HPE `parityinitializationmethod=rapid` 在旧固件上的接受度、
 > `uninit` 是否接受 `noprompt`、`ssacli clearconfig` 是否隐含删 LD、HPE 紧凑
 > `pd all show` 的 unassigned 分组、以及 RAID10 span 顺序。上线前请先用
 > `raidforge --print-raid-plan` 只读核对拓扑与空闲盘，再在实验室盘上按
@@ -1120,6 +1215,8 @@ Progress，并断言 `events.jsonl` 与 SVG 快照确实落盘。
 | L2 | `./build.sh --fast` | ~2m | zstd + 1s 倒计时的测试 ISO（`-test` 后缀） |
 | L3 | `./build.sh` | ~7m | 发布 ISO（xz） |
 | L4 | `python3 tools/qemu_drive.py --iso <iso> --settings-ip 10.255.255.1 --erase-rounds 2` | ~6m | 真启动、设置页保存不可达 IP（探测失败但不冻结）、驱动两轮擦除、确认报告累计两轮、退出菜单、VM 关机 |
+| L4b | `python3 tools/drivers.py verify --arch amd64 --iso <iso>` | ~20s | 从 ISO 抽 squashfs，校验 manifest 里的模块/固件确实在镜像内 |
+| L5 | `python3 tools/qemu_drive.py --arch arm64 --iso <iso-arm64>` | 慢 | arm64 EFI 引导 + TUI 烟测（不能替代 Kunpeng 真机） |
 
 每次构建都会把 `app/**/*.py` 的哈希写成 `BUILD_ID` 塞进镜像；`verify_freshness()`
 用 `unsquashfs -cat` 从产物 squashfs 里读回比对，不一致直接失败——防止"改了代码，
@@ -1165,6 +1262,15 @@ Windows 的 Git Bash 会把 `/root/...` 改写成盘符路径，调用前加 `MS
   `/srv/evidence/incoming`。
 * 所有厂商 CLI 都没放进镜像时，只能擦到 OS 可见的直连盘（generic 模式），
   且 RAID 管理全部禁用。
+* **arm64**：只能 UEFI/GRUB 引导（syslinux 无 arm64 端口），Kunpeng 需关闭
+  Secure Boot；`ssacli`/`perccli` 没有 aarch64 版本，ARM 上 HPE/Dell 卡只能走
+  generic 模式；VM 内 TCG 全量构建预计 1–2 小时，QEMU 烟测不能替代真机验证。
+* **驱动**：`vendor/drivers/<arch>` 里的 `.deb`/`.ko` 必须与镜像内核
+  （bookworm 6.1，当前 6.1.0-54-amd64）ABI 匹配；换内核后要重新构建。显式
+  `--probe` 时，识别到但 Debian 内核没有驱动的存储/网络设备会让构建失败，
+  需要补 `vendor/drivers` 载荷或改用 `--allow-unknown-drivers`。
+* 固件默认只装精简集（`firmware-misc-nonfree`）；QLogic HBA、Broadcom 10G 等
+  需要 `--profile full`，否则可能缺固件。
 * TUI 设置页保存的传输方式、SSH/HTTP 证据接收端、webplane 地址/端口写在 Live 的
   tmpfs（`90-site.yaml` 与 `/run/raidforge/agent.env`）里，**重启即失效**；永久值要改
   `010-install-app.hook.chroot` 的工厂模板后重建镜像。

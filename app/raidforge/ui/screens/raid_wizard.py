@@ -300,6 +300,10 @@ class RaidWizardScreen(FocusLabelMixin, Screen):
         if layout is not None:
             text.append("Capacity ", style="bold")
             text.append(f"{layout.capacity_human}\n")
+            text.append("Stripe   ", style="bold")
+            text.append(f"{layout.stripe_kb}K\n" if layout.stripe_kb else "controller default\n")
+            text.append("Init     ", style="bold")
+            text.append(f"{layout.init}\n")
             text.append("Spans    ", style="bold")
             text.append(f"{len(layout.spans)}\n")
             for index, span in enumerate(layout.spans, start=1):
@@ -335,6 +339,12 @@ class RaidWizardScreen(FocusLabelMixin, Screen):
                 f"  {index}) " + " + ".join(span)
                 for index, span in enumerate(self.raid_layout.spans, start=1)
             ]
+        stripe = (
+            f"{self.raid_layout.stripe_kb}K"
+            if self.raid_layout and self.raid_layout.stripe_kb
+            else "controller default"
+        )
+        init = self.raid_layout.init if self.raid_layout else "fast"
         request = ConfirmRequest(
             title=f"Create {self.level.value} on c{self.controller_index}",
             action="create",
@@ -344,6 +354,7 @@ class RaidWizardScreen(FocusLabelMixin, Screen):
             commands=[plan.dry_run_text for plan in self.plans],
             summary=[
                 f"Level {self.level.value}   capacity {self.raid_layout.capacity_human if self.raid_layout else '-'}",
+                f"Stripe {stripe}   init {init}",
                 *spans,
             ],
             warnings=self.warnings or ["IRREVERSIBLE: the controller may start initialising immediately."],

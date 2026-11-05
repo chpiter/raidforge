@@ -48,6 +48,8 @@ export LANG=C.UTF-8
 alias raidforge-tui='/usr/local/sbin/raidforge-tui --no-record'
 alias raidforge-plan='/opt/raidforge/venv/bin/python -m raidforge --print-plan'
 alias raidforge-ev='ls -1t /var/log/raidforge-evidence | head'
+alias raidforge-hwinfo='/usr/local/sbin/raidforge-hwinfo'
+alias raidforge-probe='/usr/local/sbin/raidforge-probe'
 [ -r /etc/bash_completion ] && . /etc/bash_completion
 BASHRC
 

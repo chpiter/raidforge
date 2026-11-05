@@ -136,6 +136,7 @@ class Services:
             name=name,
             stripe_kb=state.cfg.raid.stripe_kb,
             name_max_len=state.cfg.raid.name_max_len,
+            init=state.cfg.raid.init,
         )
         warnings = layout_mod.validate_layout(layout)
         provider = provider_for(state.detection)

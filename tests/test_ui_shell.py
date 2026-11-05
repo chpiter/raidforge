@@ -484,6 +484,8 @@ def test_wizard_preview_and_confirm(monkeypatch, tmp_path):
             await pilot.pause(0.2)
             assert wizard.raid_layout is not None
             assert wizard.raid_layout.capacity_bytes > 0
+            assert wizard.raid_layout.stripe_kb is None
+            assert wizard.raid_layout.init == "fast"
             assert len(wizard.raid_layout.spans) == 1
             assert len(wizard.plans) == 1
             assert not wizard.warnings

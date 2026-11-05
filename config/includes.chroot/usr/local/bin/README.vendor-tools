@@ -1,8 +1,18 @@
 Drop the vendor RAID CLIs here before running ./build.sh
 =======================================================
 
+Preferred layout (per architecture):
+
+    vendor/cli/amd64/   storcli, perccli, arcconf, ssacli, hpssacli
+    vendor/cli/arm64/   storcli, arcconf   (ssacli/perccli have no arm64 build)
+
+build.sh copies only the directory matching the target architecture into
+config/includes.chroot/usr/local/bin/ at staging time.  Dropping binaries
+straight into config/includes.chroot/usr/local/bin/ still works for amd64
+(legacy layout); an arm64 build refuses x86 ELF files there.
+
 The binaries are distributed by the vendors and CANNOT be shipped inside this
-repository.  Put the decompressed ELF binaries straight into this directory
+repository.  Put the decompressed ELF binaries straight into the directory
 (no wrapper scripts, no directory named like the tool):
 
     storcli / storcli64     LSI / Broadcom MegaRAID

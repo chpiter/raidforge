@@ -9,3 +9,8 @@ util-linux
 parted
 sdparm
 asciinema
+# Hardware inventory: lspci/modalias for raidforge-probe and the driver
+# resolver, ethtool -i for NIC driver reporting, modprobe/depmod for verify.
+pciutils
+ethtool
+kmod

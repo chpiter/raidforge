@@ -28,6 +28,7 @@
           v-model="form[field.name]"
           :min="field.min"
           :max="field.max"
+          :value-on-clear="null"
           controls-position="right"
           style="width: 100%"
         />
@@ -43,7 +44,12 @@
           v-model="form[field.name]"
           style="width: 100%"
         >
-          <el-option v-for="option in field.options || []" :key="option" :label="option" :value="option" />
+          <el-option
+            v-for="option in field.options || []"
+            :key="typeof option === 'string' ? option : option.value"
+            :label="typeof option === 'string' ? option : option.label || option.value"
+            :value="typeof option === 'string' ? option : option.value"
+          />
         </el-select>
 
         <el-select
@@ -219,7 +225,12 @@ function clean() {
     raw.expected_vd_count = Number(raw.expected_vd_count) || 0
   }
   if (typeof raw.strip_size_kb !== 'undefined') {
-    raw.strip_size_kb = Number(raw.strip_size_kb) || 256
+    const stripe = Number(raw.strip_size_kb)
+    if (!raw.strip_size_kb || !Number.isFinite(stripe) || stripe <= 0) {
+      delete raw.strip_size_kb
+    } else {
+      raw.strip_size_kb = stripe
+    }
   }
   if (typeof raw.passes !== 'undefined') {
     raw.passes = Number(raw.passes) || 1

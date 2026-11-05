@@ -553,7 +553,10 @@ class RaidLayout:
     level: RaidLevel
     disks: List[DiskInfo]
     mode: Raid0Mode = Raid0Mode.SINGLE
-    stripe_kb: int = 256
+    #: ``None`` means "do not emit a stripe option" (controller default).
+    stripe_kb: Optional[int] = None
+    #: ``fast`` requests the vendor fast-init option where one exists.
+    init: str = "fast"
     name: str = ""
     spans: List[List[str]] = field(default_factory=list)
     volume_names: List[str] = field(default_factory=list)
@@ -569,6 +572,7 @@ class RaidLayout:
             "level": self.level.value,
             "mode": self.mode.value,
             "stripe_kb": self.stripe_kb,
+            "init": self.init,
             "name": self.name,
             "spans": [list(span) for span in self.spans],
             "volume_names": list(self.volume_names),

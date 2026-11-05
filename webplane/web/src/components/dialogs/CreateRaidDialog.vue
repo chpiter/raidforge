@@ -16,12 +16,12 @@
 
     <el-form label-position="top" style="margin-top: 12px">
       <el-row :gutter="16">
-        <el-col :span="8">
+        <el-col :span="6">
           <el-form-item label="卷名称" required>
             <el-input v-model="name" maxlength="15" show-word-limit placeholder="vd-name" />
           </el-form-item>
         </el-col>
-        <el-col :span="8">
+        <el-col :span="6">
           <el-form-item label="RAID 级别">
             <el-select v-model="level" style="width: 100%">
               <el-option label="RAID0" value="RAID0" />
@@ -31,9 +31,25 @@
             </el-select>
           </el-form-item>
         </el-col>
-        <el-col :span="8">
+        <el-col :span="6">
           <el-form-item label="条带 (KB)">
-            <el-input-number v-model="stripKb" :min="16" :max="4096" controls-position="right" style="width: 100%" />
+            <el-input-number
+              v-model="stripKb"
+              :min="16"
+              :max="4096"
+              :value-on-clear="null"
+              controls-position="right"
+              placeholder="留空=控制器默认"
+              style="width: 100%"
+            />
+          </el-form-item>
+        </el-col>
+        <el-col :span="6">
+          <el-form-item label="初始化方式">
+            <el-select v-model="init" style="width: 100%">
+              <el-option label="快速初始化 (fast)" value="fast" />
+              <el-option label="不显式指定 (none)" value="none" />
+            </el-select>
           </el-form-item>
         </el-col>
       </el-row>
@@ -102,7 +118,8 @@ const emit = defineEmits(['update:modelValue', 'submitted'])
 
 const name = ref('')
 const level = ref('RAID0')
-const stripKb = ref(256)
+const stripKb = ref(null)
+const init = ref('fast')
 const dryRun = ref(true)
 const confirmed = ref(false)
 const submitting = ref(false)
@@ -165,7 +182,8 @@ const onSelectionChange = (rows) => {
 const reset = async () => {
   name.value = ''
   level.value = 'RAID0'
-  stripKb.value = 256
+  stripKb.value = null
+  init.value = 'fast'
   dryRun.value = true
   confirmed.value = false
   selectedRows.value = []
@@ -204,17 +222,19 @@ const submit = async () => {
       if (disk.media_type) item.media_type = disk.media_type
       return item
     })
+    const params = {
+      controller_id: props.controllerId,
+      name: name.value.trim(),
+      raid_level: level.value,
+      pds,
+      init: init.value,
+      dry_run: dryRun.value
+    }
+    if (Number(stripKb.value) > 0) params.strip_size_kb = Number(stripKb.value)
     const data = await createTask({
       agent_id: props.agentId,
       type: 'create_raid',
-      params: {
-        controller_id: props.controllerId,
-        name: name.value.trim(),
-        raid_level: level.value,
-        pds,
-        strip_size_kb: stripKb.value,
-        dry_run: dryRun.value
-      },
+      params,
       require_local_confirm: true
     })
     emit('submitted', [data.task.task_id])

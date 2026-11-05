@@ -199,13 +199,15 @@ def build_create(snapshot: HostSnapshot, params: Dict[str, Any]) -> CreatePlan:
         raise TaskRejected("raid_level_unsupported", f"控制器不支持 {level.value}", field="raid_level")
     safety.check_create_targets(snapshot, metadata, disks, info.index)
     safety.check_controller_idle(snapshot, info.index)
+    stripe_raw = params.get("strip_size_kb")
     layout = build_layout(
         level,
         disks,
         Raid0Mode.SINGLE,
         name=params["name"],
-        stripe_kb=int(params["strip_size_kb"]),
+        stripe_kb=int(stripe_raw) if stripe_raw else None,
         name_max_len=15,
+        init=params.get("init", "fast"),
     )
     try:
         ensure_valid(layout)

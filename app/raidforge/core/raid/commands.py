@@ -125,8 +125,9 @@ def _lsi_create(controller: ControllerInfo, layout: RaidLayout, disks: List[Disk
         _level_token(layout.level, Vendor.LSI),
         f"drives={refs}",
         "size=all",
-        f"strip={layout.stripe_kb}",
     ]
+    if layout.stripe_kb:
+        argv.append(f"strip={layout.stripe_kb}")
     if layout.level is RaidLevel.RAID10:
         argv.append("pdperarray=2")
     if name:
@@ -139,17 +140,19 @@ def _lsi_create(controller: ControllerInfo, layout: RaidLayout, disks: List[Disk
         disks,
         layout.level,
         span,
-        "Controller default initialisation applies; creation may run asynchronously",
+        "storcli fast-initialises new VDs by default; creation may run asynchronously",
     )
 
 
 def _pmc_create(controller: ControllerInfo, layout: RaidLayout, disks: List[DiskInfo], name: str) -> RaidCommandPlan:
     argv = [_binary(controller), "create", str(controller.index), "logicaldrive"]
-    # VERIFY: option order (stripesize/name) differs between arcconf builds.
+    # VERIFY: option order (stripesize/name/method) differs between arcconf builds.
     if layout.stripe_kb:
         argv += ["stripesize", str(layout.stripe_kb)]
     if name:
         argv += ["name", name]
+    if layout.init != "none":
+        argv += ["method", "quick"]
     argv += ["MAX", _level_token(layout.level, Vendor.PMC)]
     for disk in disks:
         argv += _pmc_coords(disk)
@@ -162,7 +165,7 @@ def _pmc_create(controller: ControllerInfo, layout: RaidLayout, disks: List[Disk
         disks,
         layout.level,
         span,
-        "arcconf may initialise the new logical drive immediately",
+        "arcconf `method quick` requests fast initialisation; the LD may appear immediately",
     )
 
 
@@ -176,8 +179,11 @@ def _hpe_create(controller: ControllerInfo, layout: RaidLayout, disks: List[Disk
         "type=ld",
         f"drives={refs}",
         f"raid={_level_token(layout.level, Vendor.HPE)}",
-        f"ss={layout.stripe_kb}",
     ]
+    if layout.stripe_kb:
+        argv.append(f"ss={layout.stripe_kb}")
+    if layout.init != "none" and layout.level is RaidLevel.RAID5:
+        argv.append("parityinitializationmethod=rapid")
     if name:
         argv.append(f"label={name}")
     argv.append("forced")
@@ -189,7 +195,8 @@ def _hpe_create(controller: ControllerInfo, layout: RaidLayout, disks: List[Disk
         disks,
         layout.level,
         span,
-        "ssacli `forced` suppresses the interactive data-loss prompt only",
+        "ssacli `forced` suppresses the interactive data-loss prompt only; "
+        "RPI applies to RAID5, other levels initialise automatically",
     )
 
 

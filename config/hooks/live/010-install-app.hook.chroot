@@ -99,6 +99,13 @@ fi
 # heredoc).  includes.chroot preserves the host file mode, so make sure it is
 # executable inside the image.
 install -d /usr/local/sbin
+for script in /usr/local/sbin/raidforge-tui \
+              /usr/local/sbin/raidforge-probe \
+              /usr/local/sbin/raidforge-hwinfo; do
+    if [ -f "$script" ]; then
+        chmod 0755 "$script"
+    fi
+done
 chmod 0755 /usr/local/sbin/raidforge-tui 2>/dev/null || {
     echo "!! /usr/local/sbin/raidforge-tui is missing from includes.chroot" >&2
     exit 1
@@ -170,8 +177,10 @@ report:
 tools:
   command_timeout: 60
 raid:
-  # RAID0/1/5/10 creation defaults.  Stripe size is fixed in the UI.
-  stripe_kb: 256
+  # Stripe: null = controller default; set a positive KB value to force one.
+  stripe_kb: null
+  # fast = vendor fast init where available; none = controller default.
+  init: "fast"
   command_timeout: 120
   allow_clear_config: true
   name_max_len: 15

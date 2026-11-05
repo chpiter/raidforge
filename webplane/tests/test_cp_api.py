@@ -20,7 +20,7 @@ def params_for(task_type: str):
             "name": "vd-test",
             "raid_level": "RAID0",
             "pds": [PD],
-            "strip_size_kb": 256,
+            "init": "fast",
             "dry_run": True,
         }
     if task_type == "delete_raid":
@@ -84,6 +84,11 @@ def test_task_types_endpoint(client):
     for item in items:
         assert item["template"]
         assert item["fields"]
+    create = next(item for item in items if item["type"] == "create_raid")
+    assert create["template"]["strip_size_kb"] is None
+    assert create["template"]["init"] == "fast"
+    init_field = next(field for field in create["fields"] if field["name"] == "init")
+    assert [option["value"] for option in init_field["options"]] == ["fast", "none"]
 
 
 @pytest.mark.parametrize("task_type", ALL_TYPES)
@@ -98,6 +103,22 @@ def test_create_all_task_types(client, register_agent, agent_headers, task_type)
     assert task["type"] == task_type
     assert task["status"] == "pending"
     assert task["server_sn"] == "SN-1"
+
+
+def test_create_raid_accepts_zero_stripe_as_controller_default(
+    client, register_agent, agent_headers
+):
+    register_agent(agent_headers)
+    params = params_for("create_raid")
+    params["strip_size_kb"] = 0
+    response = client.post(
+        "/api/cp/tasks",
+        json={"agent_id": "agent-1", "type": "create_raid", "params": params},
+    )
+    assert response.status_code == 201, response.get_json()
+    task = response.get_json()["task"]
+    assert task["params"]["strip_size_kb"] is None
+    assert task["params"]["init"] == "fast"
 
 
 @pytest.mark.parametrize(
@@ -120,6 +141,26 @@ def test_create_all_task_types(client, register_agent, agent_headers, task_type)
                 "raid_level": "RAID0",
                 "pds": [PD],
                 "unknown_field": 1,
+            },
+        ),
+        (
+            "create_raid",
+            {
+                "controller_id": CONTROLLER,
+                "name": "x",
+                "raid_level": "RAID0",
+                "pds": [PD],
+                "strip_size_kb": 8,
+            },
+        ),
+        (
+            "create_raid",
+            {
+                "controller_id": CONTROLLER,
+                "name": "x",
+                "raid_level": "RAID0",
+                "pds": [PD],
+                "init": "quick",
             },
         ),
         (

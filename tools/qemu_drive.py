@@ -221,23 +221,43 @@ def run(args) -> int:
     sock.unlink(missing_ok=True)
     serial = out_dir / "serial.log"
 
-    cmd = [
-        "qemu-system-x86_64", "-m", "2048", "-smp", "2",
-        "-accel", "tcg,thread=multi",
-        "-cdrom", str(iso), "-boot", "d",
-        "-vga", "std", "-display", "none", "-no-reboot", "-snapshot",
-        "-monitor", f"unix:{sock},server,nowait",
-        "-serial", f"file:{serial}",
-        # An NVMe namespace, not a SCSI disk: qemu's scsi-hd answers smartctl
-        # with "SMART unsupported", which the app correctly classifies as
-        # UNKNOWN medium and refuses to select - leaving the confirm dialog
-        # unreachable.  nvme-cli does enumerate the emulated namespace, so the
-        # NVMe code path (and its selection/dry-run) is exercised end to end.
-        "-drive", f"file={disk},format=raw,if=none,id=d1",
-        "-device", "nvme,serial=ERASE01,drive=d1",
-        "-netdev", "user,id=n0", "-device", "virtio-net-pci,netdev=n0",
-    ]
-    log("starting qemu (TCG, no KVM)")
+    if getattr(args, "arch", "amd64") == "arm64":
+        efi = Path("/usr/share/qemu-efi-aarch64/QEMU_EFI.fd")
+        if not efi.exists():
+            die("qemu-efi-aarch64 not installed (apt install qemu-efi-aarch64)")
+        cmd = [
+            "qemu-system-aarch64", "-M", "virt", "-cpu", "max",
+            "-m", "2048", "-smp", "2",
+            "-accel", "tcg,thread=multi",
+            "-bios", str(efi),
+            "-cdrom", str(iso), "-boot", "d",
+            "-device", "virtio-gpu-pci", "-device", "virtio-keyboard-pci",
+            "-display", "none", "-no-reboot", "-snapshot",
+            "-monitor", f"unix:{sock},server,nowait",
+            "-serial", f"file:{serial}",
+            "-drive", f"file={disk},format=raw,if=none,id=d1",
+            "-device", "nvme,serial=ERASE01,drive=d1",
+            "-netdev", "user,id=n0", "-device", "virtio-net-pci,netdev=n0",
+        ]
+        log("starting qemu-system-aarch64 (TCG, EFI; first boot is slow)")
+    else:
+        cmd = [
+            "qemu-system-x86_64", "-m", "2048", "-smp", "2",
+            "-accel", "tcg,thread=multi",
+            "-cdrom", str(iso), "-boot", "d",
+            "-vga", "std", "-display", "none", "-no-reboot", "-snapshot",
+            "-monitor", f"unix:{sock},server,nowait",
+            "-serial", f"file:{serial}",
+            # An NVMe namespace, not a SCSI disk: qemu's scsi-hd answers smartctl
+            # with "SMART unsupported", which the app correctly classifies as
+            # UNKNOWN medium and refuses to select - leaving the confirm dialog
+            # unreachable.  nvme-cli does enumerate the emulated namespace, so the
+            # NVMe code path (and its selection/dry-run) is exercised end to end.
+            "-drive", f"file={disk},format=raw,if=none,id=d1",
+            "-device", "nvme,serial=ERASE01,drive=d1",
+            "-netdev", "user,id=n0", "-device", "virtio-net-pci,netdev=n0",
+        ]
+        log("starting qemu (TCG, no KVM)")
     proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT)
 
     try:
@@ -380,9 +400,15 @@ def main() -> int:
                              "not freeze the console)")
     parser.add_argument("--settings-wait", type=float, default=8.0)
     parser.add_argument("--keep-running", action="store_true")
+    parser.add_argument("--arch", choices=("amd64", "arm64"), default="amd64",
+                        help="arm64 boots via UEFI/grub-efi (QEMU virt machine); "
+                             "it is much slower under TCG and is a smoke test only")
     args = parser.parse_args()
 
-    if shutil.which("qemu-system-x86_64") is None:
+    if args.arch == "arm64":
+        if shutil.which("qemu-system-aarch64") is None:
+            die("qemu-system-aarch64 not installed (apt install qemu-system-arm)")
+    elif shutil.which("qemu-system-x86_64") is None:
         die("qemu-system-x86_64 not installed (apt install qemu-system-x86)")
 
     return run(args)

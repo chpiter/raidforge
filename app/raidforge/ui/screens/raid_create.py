@@ -116,10 +116,16 @@ class RaidCreateScreen(BaseScreen):
 
     # -- rendering ----------------------------------------------------------
     def _refresh_header(self) -> None:
+        stripe = (
+            f"{self.ctx.cfg.raid.stripe_kb}K"
+            if self.ctx.cfg.raid.stripe_kb
+            else "controller default"
+        )
         self._level_line.update(
             f"Level: {self.level.value}   [0] RAID0  [1] RAID1  [5] RAID5  [T] RAID10\n"
             f"RAID0 mode: {self.mode.value}   (G toggles single VD / one VD per disk)\n"
-            f"Stripe: {self.ctx.cfg.raid.stripe_kb}K (fixed)   Selected: {len(self._table.selected_ids)}"
+            f"Stripe: {stripe}   Init: {self.ctx.cfg.raid.init}   "
+            f"Selected: {len(self._table.selected_ids)}"
         )
 
     def _selected_disks(self) -> List[DiskInfo]:
@@ -134,6 +140,7 @@ class RaidCreateScreen(BaseScreen):
             name=self._name_input.value,
             stripe_kb=self.ctx.cfg.raid.stripe_kb,
             name_max_len=self.ctx.cfg.raid.name_max_len,
+            init=self.ctx.cfg.raid.init,
         )
         errors = validate_layout(layout)
         self._refresh_header()
@@ -220,6 +227,7 @@ class RaidCreateScreen(BaseScreen):
             name=self._name_input.value,
             stripe_kb=self.ctx.cfg.raid.stripe_kb,
             name_max_len=self.ctx.cfg.raid.name_max_len,
+            init=self.ctx.cfg.raid.init,
         )
         errors = validate_layout(layout)
         if errors:
@@ -240,8 +248,10 @@ class RaidCreateScreen(BaseScreen):
 
         self.ctx.raid_epoch += 1
         epoch = self.ctx.raid_epoch
+        stripe = f"{layout.stripe_kb}K" if layout.stripe_kb else "controller default"
         extra = [
-            f"Level {layout.level.value}, mode {layout.mode.value}, stripe {layout.stripe_kb}K",
+            f"Level {layout.level.value}, mode {layout.mode.value}, "
+            f"stripe {stripe}, init {layout.init}",
             f"Disks: " + ", ".join(f"{d.disk_id}@{d.location}" for d in selected),
             f"Usable capacity: ~{layout.capacity_human}",
         ]

@@ -154,3 +154,15 @@ def test_pmc_and_hpe_addressability():
     assert validate_layout(pmc) == []
     hpe = build_layout(RaidLevel.RAID1, [disk(0, vendor=Vendor.HPE), disk(1, vendor=Vendor.HPE)])
     assert validate_layout(hpe) == []
+
+
+def test_stripe_and_init_defaults():
+    disks = [disk(0), disk(1)]
+    default = build_layout(RaidLevel.RAID1, disks)
+    assert default.stripe_kb is None
+    assert default.init == "fast"
+
+    assert build_layout(RaidLevel.RAID1, disks, stripe_kb=512).stripe_kb == 512
+    assert build_layout(RaidLevel.RAID1, disks, stripe_kb=0).stripe_kb is None
+    assert build_layout(RaidLevel.RAID1, disks, init="NONE").init == "none"
+    assert build_layout(RaidLevel.RAID1, disks, init="garbage").init == "fast"

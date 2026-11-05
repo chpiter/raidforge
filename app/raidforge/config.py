@@ -89,11 +89,21 @@ class ToolConfig:
 class RaidConfig:
     """RAID management defaults (creation and destructive write limits)."""
 
-    stripe_kb: int = 256
+    #: ``None`` means "controller default": no stripe option is emitted.
+    stripe_kb: Optional[int] = None
+    #: ``fast`` requests fast initialisation where the vendor exposes it.
+    init: str = "fast"
     #: RAID commands can take longer than erase submissions (controller work).
     command_timeout: float = 120.0
     allow_clear_config: bool = True
     name_max_len: int = 15
+
+    def __post_init__(self) -> None:
+        if not self.stripe_kb:
+            self.stripe_kb = None
+        else:
+            self.stripe_kb = int(self.stripe_kb)
+        self.init = "none" if str(self.init or "").strip().lower() == "none" else "fast"
 
 
 @dataclass
@@ -261,8 +271,12 @@ class Config:
         return self.tools.default_ssd_method
 
     @property
-    def raid_stripe_kb(self) -> int:
+    def raid_stripe_kb(self) -> Optional[int]:
         return self.raid.stripe_kb
+
+    @property
+    def raid_init(self) -> str:
+        return self.raid.init
 
     @property
     def raid_command_timeout(self) -> float:

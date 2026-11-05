@@ -50,9 +50,13 @@ tools:
   default_ssd_method: null   # null => sanitize when SED capable, else blockerase
 
 raid:
-  # RAID0/1/5/10 creation defaults.  The TUI currently fixes the stripe size
-  # and does not expose cache/initialisation policies.
-  stripe_kb: 256
+  # Stripe: null = controller default (no strip/stripesize/ss option emitted).
+  # Set a positive KB value to force an explicit stripe on every level.
+  stripe_kb: null
+  # fast = request fast initialisation where the vendor exposes an option;
+  # none = emit no initialisation option (controller default). LSI always
+  # uses the controller default fast init.
+  init: "fast"
   command_timeout: 120
   allow_clear_config: true
   name_max_len: 15

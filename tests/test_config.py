@@ -172,3 +172,32 @@ def test_report_env_overrides_transport_and_ports(monkeypatch, tmp_path):
     assert cfg.report.ssh_port == 2222
     assert cfg.report.http_port == 9090
     assert cfg.report.run_upload_seconds == 7.0
+
+
+def test_raid_defaults_are_controller_stripe_and_fast_init(monkeypatch, tmp_path):
+    config_dir = _isolate(monkeypatch, tmp_path)
+    cfg = config_mod.load_config(config_dir=str(config_dir))
+    assert cfg.raid.stripe_kb is None
+    assert cfg.raid.init == "fast"
+    assert cfg.raid_stripe_kb is None
+    assert cfg.raid_init == "fast"
+
+    explicit = config_mod.load_config(
+        config_dir=str(config_dir),
+        overrides={"raid": {"stripe_kb": 512, "init": "none"}},
+    )
+    assert explicit.raid.stripe_kb == 512
+    assert explicit.raid.init == "none"
+
+    normalized = config_mod.load_config(
+        config_dir=str(config_dir),
+        overrides={"raid": {"stripe_kb": 0, "init": "NONE"}},
+    )
+    assert normalized.raid.stripe_kb is None
+    assert normalized.raid.init == "none"
+
+    fallback = config_mod.load_config(
+        config_dir=str(config_dir),
+        overrides={"raid": {"init": "garbage"}},
+    )
+    assert fallback.raid.init == "fast"
